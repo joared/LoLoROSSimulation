@@ -1,3 +1,5 @@
 devel/
 build/
 .catkin_workspace
+*.pyc
+__pycache__/
