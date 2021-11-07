@@ -15,41 +15,39 @@ def psf(I0, r):
         #return 1*(np.pi-theta0)
         return 1
 
-    theta = 0.01
-    theta0 = 0.1
+    theta = np.pi/2
+    theta0 = np.pi/2
     w0 = .87
-    b = .3
+    b = .1
     L = 1
     tau = 1.39807 * r/20
     m = 1/(w0 - 2*r*theta0)
+    #r = 7
 
     #return K(theta0)*np.random.poisson(lam=b*r)*np.exp(-tau) / (2*np.pi*pow(theta, m))
     
-    return I0*np.exp(-b*r) #/ (2*np.pi*pow(theta, m))
+    #return I0*np.exp(-b*r)/10
+    den = (2*np.pi*pow(theta, m))
+    #print(den)
+    return I0*np.exp(-b*r)/ den
 
-def scatter(img, points, size):
-    """
-    for x in range(img.shape[0]):
-        for y in range(img.shape[1]):
-            for point in points:
-                I0 = img[point[0], point[1]]
-                r = np.linalg.norm([point[0]-x, point[1]-y])
-                if r < 20:
-                    img[x, y] += psf(I0, r)
-                    img[x, y] = min(img[x, y], 1)
-    """
-    for point in points:
-        I0 = img[point[0], point[1]]
-        
-        for dx in range(-size, size):
-            for dy in range(-size, size):
-                x = point[0] + dx
-                y = point[1] + dy
-                if x > 0 and x < img.shape[0] and y > 0 and y < img.shape[1]:
-                    r = np.linalg.norm([dx, dy])
-                    img[x, y] += psf(I0, r)
-                    img[x, y] = min(img[x, y], 1)
+def scatterPoint(img, point, r, size):
+    r = r*2.2 # hardcoded to make simulation a bit nicer
+    I0 = img[point[0], point[1]]
+    I0 = psf(I0, r)
+    img[point[0], point[1]] = I0
 
+    for dx in range(-size, size):
+        for dy in range(-size, size):
+            x = point[0] + dx
+            y = point[1] + dy
+            if dx == 0 and dy == 0:
+                continue
+            
+            if x > 0 and x < img.shape[0] and y > 0 and y < img.shape[1]:
+                xyr = np.linalg.norm([dx, dy])*2
+                img[x, y] += psf(I0, xyr)
+                img[x, y] = min(img[x, y], 255)
 
 if __name__ == "__main__":
     import time
@@ -61,7 +59,8 @@ if __name__ == "__main__":
     for point in points:
         img[point[0], point[1]] = 255
 
-    scatter(img, points, size=50)
+    for point in points:
+        scatterPoint(img, point, r=3, size=50)
 
     size = 20
     #for point in points:

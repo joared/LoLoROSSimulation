@@ -6,57 +6,136 @@ import rospy
 from sensor_msgs.msg import Image
 import os.path
 import glob
+import time
 import numpy as np
 import matplotlib.pyplot as plt
 from feature_extraction import featureAssociation, drawInfo, ThresholdFeatureExtractor
-from pose_estimation import DSPoseEstimator, polygon
-
+from pose_estimation import DSPoseEstimator
 # remove this eventually
-from pose_estimation_simulation import measurePose, CoordinateSystem, CoordinateSystemArtist
+import sys
+sys.path.append("../../simulation/scripts")
+from camera import usbCamera
+from feature import FeatureModel, polygon
+from coordinate_system import CoordinateSystem, CoordinateSystemArtist
 
 from scipy.spatial.transform import Rotation as R
+
+def plotAxis(img, translationVector, rotationVector, camera, points):
+    points = points[:, :3].copy()
+    #print(points)
+    rad = 0.043
+    projPoints, jacobian = cv.projectPoints(points, 
+                                            rotationVector, 
+                                            translationVector, 
+                                            camera.cameraMatrix, 
+                                            camera.distCoeffs)
+    projPoints = np.array([p[0] for p in projPoints])
+
+    zDir, jacobian = cv.projectPoints(np.array([(0.0, 0.0, rad)]), 
+                                      rotationVector, 
+                                      translationVector, 
+                                      camera.cameraMatrix, 
+                                      camera.distCoeffs)
+
+    yDir, jacobian = cv.projectPoints(np.array([(0.0, rad, 0.0)]), 
+                                      rotationVector, 
+                                      translationVector, 
+                                      camera.cameraMatrix, 
+                                      camera.distCoeffs)
+
+    xDir, jacobian = cv.projectPoints(np.array([(rad, 0.0, 0.0)]), 
+                                      rotationVector, 
+                                      translationVector, 
+                                      camera.cameraMatrix, 
+                                      camera.distCoeffs)
+
+    center, jacobian = cv.projectPoints(np.array([(0.0, 0.0, 0.0)]), 
+                                        rotationVector, 
+                                        translationVector, 
+                                        camera.cameraMatrix, 
+                                        camera.distCoeffs)
+
+    center = center[0][0][0] / camera.pixelWidth, center[0][0][1] / camera.pixelHeight   
+    for d, c in zip((xDir, yDir, zDir), ((0,0,255), (0,255,0), (255,0,0))):
+        cx = center[0]
+        cy = center[1]
+        point1 = (int(round(cx)), int(round(cy)))
+        point2 = (int(round(d[0][0][0] / camera.pixelWidth)), int(round(d[0][0][1] / camera.pixelHeight)))
+        cv.line(img, point1, point2, c, 5)
+
+    for p in projPoints:
+        x = int( p[0] / camera.pixelWidth )
+        y = int( p[1] / camera.pixelHeight )
+        radius = 2
+        cv.circle(img, (x,y), radius, (0, 0, 255), 3)
+
+def plotPoints(img, translationVector, rotationVector, camera, points):
+    projPoints, jacobian = cv.projectPoints(points, 
+                                        rotationVector, 
+                                        translationVector, 
+                                        camera.cameraMatrix, 
+                                        camera.distCoeffs)
+    projPoints = np.array([p[0] for p in projPoints])
+    for p in projPoints:
+        x = int( p[0] / camera.pixelWidth )
+        y = int( p[1] / camera.pixelHeight )
+        radius = 2
+        cv.circle(img, (x,y), radius, (0, 0, 255), 3)
 
 def callback(msg):
     global image_msg
     image_msg = msg
     return
 
+class Perception:
+    def __init__(self, camera, featureModel):
+        self.camera = camera
+        self.featureModel = featureModel
+
+
 def main():
     global image_msg
 
-    pixelWidth = 0.0000028
-    pixelHeight = 0.0000028
-    #pixelSize = 0.0009
-    px = 329.864062734141
-    py = 239.0201541966089
-    cameraMatrix = np.array([[812.2540283203125,   0,    		        px],
-                              [   0,               814.7816162109375, 	py], 
-	                          [   0,     		     0,   		       	1]], dtype=np.float32)
-    
-    cameraMatrix[0, :] *= pixelWidth
-    cameraMatrix[1, :] *= pixelHeight
-    distCoeffs = np.zeros((4,1), dtype=np.float32)
+    featureModel = FeatureModel([0.06, 0], [4, 1], [True, False], [0, 0.043])
+    points3D = featureModel.features
 
-    fakeRadius = 0.06
-    points3D = np.array([[0, 0, -0.043, 1.]])
-    points3D = np.append(points3D, polygon(rad=fakeRadius, n=4, shift=True, zShift=0), axis=0)
+    # points expressed as if the relative orientation between camera and featureModel is the identity matrix
+    #points3D = np.array([[0, 0, 0.043, 1.]])
+    #points3D = np.append(points3D, polygon(rad=0.06, n=4, shift=True, zShift=0), axis=0)
+    
+    # square
+    #points3D = polygon(rad=0.06, n=4, shift=True, zShift=0)
+
+    # we need to rotate the points if we want the relative orientation to be different, 
+    # otherwise feature association will fail
+    points3DAss = np.matmul( R.from_euler("XYZ", (0, np.pi, 0)).as_dcm(), points3D[:, :3].transpose()).transpose()    
+    points3DAss = np.append(points3DAss, np.ones((points3DAss.shape[0], 1)), axis=1)
+
     nFeatures = len(points3D)
 
-    featureExtractor = ThresholdFeatureExtractor(nFeatures=nFeatures, p=0.02)
-    poseEstimator = DSPoseEstimator(cameraMatrix, distCoeffs)
+
+    camera = usbCamera
+    featureExtractor = ThresholdFeatureExtractor(featureModel=featureModel, camera=camera, p=0.02, erosionKernelSize=7, maxIter=10, useKernel=False)
+    poseEstimator = DSPoseEstimator(camera)
 
     fig = plt.figure()
     axes = fig.gca(projection='3d')
     fig2 = plt.figure()
     axes2 = fig2.gca()
-    cs = CoordinateSystem(scale=0.1)
-    csArt = CoordinateSystemArtist(cs)
-    csRef = CoordinateSystem([0,0,0], (-np.pi/2, np.pi/2, 0), scale=0.1)
-    csRefArt = CoordinateSystemArtist(csRef)
+    axisScale = 0.2
+    cs = CoordinateSystem()
+    csArt = CoordinateSystemArtist(cs, scale=axisScale)
+    csRef = CoordinateSystem([0,0,0], (-np.pi/2, np.pi/2, 0))
+    csRefArt = CoordinateSystemArtist(csRef, scale=axisScale)
     csArt.init(axes)
     csRefArt.init(axes)
 
+    estTranslationVec = None
+    estRotationVec = None
+    poseAquired = False
+
     dsVel = []
+    startTime = time.time()
     while not rospy.is_shutdown():
         if image_msg:
             try:
@@ -64,33 +143,26 @@ def main():
             except CvBridgeError as e:
                 print(e)
             else:
-                origImg = imgColor
-                imgColor = imgColor.copy()
+                elapsed = time.time() - startTime
+                unTouched = imgColor.copy()
+                origImg = imgColor.copy()
+                poseImg = imgColor.copy()
+                #imgColor = imgColor.copy()
                 gray = cv.cvtColor(imgColor, cv.COLOR_BGR2GRAY)
-                hist = cv.calcHist([gray], [0], None, [256], [0, 256])
+                #hist = cv.calcHist([gray], [0], None, [256], [0, 256])
 
-                res, points = featureExtractor(gray, imgColor)
-                # points are in pixels, convert points to meters
-                points = np.array(points, dtype=np.float32)
-                points[:,0] *= pixelWidth
-                points[:,1] *= pixelHeight
-
-                associatedPoints, featurePointsScaled, (cx,cy) = featureAssociation(points3D, points)
-
-                for i in range(len(associatedPoints)):
-                    # convert points to pixels
-                    px = associatedPoints[i][0] / pixelWidth
-                    py = associatedPoints[i][1] / pixelHeight
-                    fpx = (featurePointsScaled[i][0]+cx) / pixelWidth
-                    fpy = (featurePointsScaled[i][1]+cy) / pixelHeight
-                    drawInfo(origImg, (int(px), int(py)), str(i))
-                    drawInfo(origImg, (int(fpx), int(fpy)), str(i), color=(0, 0, 255))
+                res, associatedPoints = featureExtractor(gray, imgColor, estTranslationVec, estRotationVec)
 
                 if len(associatedPoints) == nFeatures:
                     translationVector, rotationVector = poseEstimator.update(points3D, 
                                                                              associatedPoints, 
-                                                                             np.array([[pixelWidth*2], [pixelHeight*2]]), 1)
-                    
+                                                                             np.array([[camera.pixelWidth*2, 0], 
+                                                                                       [0, camera.pixelHeight*2]]),
+                                                                             elapsed,
+                                                                             estTranslationVec,
+                                                                             estRotationVec)
+
+                    startTime = time.time()
                     # show lights pose wrt to camera
                     rotMat = R.from_rotvec(rotationVector.transpose()).as_dcm()
                     transl = translationVector
@@ -107,14 +179,24 @@ def main():
                     translation = np.matmul(csRef.rotation, transl)
                     rotation = np.matmul(csRef.rotation, np.array(rotMat))
 
-                    #translation *= pixelSize
                     print("Range:", np.linalg.norm(translation))
-                    cs.setTransform(translation, rotation) # display camera as reference frame
+                    cs.setTransform(translation, rotation)
 
-            cv.imshow("gray", origImg)
+                    plotAxis(poseImg, translationVector, rotationVector, camera, points3D)
+                    for p in associatedPoints:
+                        x = int( p[0] / camera.pixelWidth )
+                        y = int( p[1] / camera.pixelHeight )
+                        radius = 2
+                        cv.circle(poseImg, (x,y), radius, (255, 0, 0), 3)
+
+                    if poseAquired:
+                        print("Pose aquired")
+                        estTranslationVec = translationVector
+                        estRotationVec = rotationVector
+            
             axes.cla()
             axes2.cla()
-            size = 0.5
+            size = 1
             axes.set_xlim(-size, size)
             axes.set_ylim(-size, size)
             axes.set_zlim(-size, size)
@@ -122,14 +204,25 @@ def main():
             csRefArt.draw(axes)
 
             dsVel.append(poseEstimator.dsVelocity[2]) # z velocity
-            
-            axes2.plot(dsVel[-100:])
+            #axes2.plot(dsVel[-100:])
             #csArt.update()
             #csRefArt.update()
             #axes2.plot(hist)
+            #cv.imshow("boundingbox", res)
+            #cv.imshow("original", unTouched)
+            #cv.imshow("bin", featureExtractor.pHold.img)
+            #cv.imshow("opened image", featureExtractor.adaOpen.img)
+            #cv.imshow("image processing", imgColor)
+            #cv.imshow("feature association", origImg)
+            cv.imshow("pose estimation", poseImg)
             
-        cv.waitKey(1)
-        plt.pause(0.0001)
+        key = cv.waitKey(1)
+        if key == ord("f"):
+            poseAquired = not poseAquired
+            if not poseAquired:
+                estTranslationVec = None
+                estRotationVec = None
+        #plt.pause(0.0001)
 
 if __name__ == '__main__':
     rospy.init_node('perception_node')

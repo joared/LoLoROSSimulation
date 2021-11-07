@@ -1,13 +1,8 @@
 #!/usr/bin/env python
 import cv2 as cv
-from cv_bridge import CvBridge, CvBridgeError
-import roslib
-import rospy
-from sensor_msgs.msg import Image
-import os.path
-import glob
 import numpy as np
 import matplotlib.pyplot as plt
+from scipy.spatial.transform import Rotation as R
 
 class PercentageThreshold:
     def __init__(self, p, thresholdType=cv.THRESH_BINARY):
@@ -116,8 +111,9 @@ class AdaptiveOpen:
     image are as close to but at least the desired nFeatures.
     The number of iterations are saved until next call to prevent unecessary reiteration.
     """
-    def __init__(self, nFeatures, kernelSize=5, kernelType=cv.MORPH_ELLIPSE, startIterations=1):
+    def __init__(self, nFeatures, kernelSize=5, kernelType=cv.MORPH_ELLIPSE, startIterations=1, maxIter=10):
         self.iterations = startIterations
+        self.maxIter = maxIter
         self.nFeatures = nFeatures
         self.kernel = cv.getStructuringElement(kernelType, (kernelSize,kernelSize)) 
         self.img = None
@@ -129,13 +125,14 @@ class AdaptiveOpen:
 
         imgTemp = img.copy()
         i = self.iterations
-        while len(contours) >= self.nFeatures:
-            i += 1
+        while len(contours) >= self.nFeatures and i <= self.maxIter:
             # doesnt really matter if open or erode is used?
             imgTemp = cv.morphologyEx(img.copy(), cv.MORPH_OPEN, self.kernel, iterations=i)
             #imgTemp = cv.morphologyEx(img.copy(), cv.MORPH_ERODE, self.kernel, iterations=i)
             _, contours, hier = cv.findContours(imgTemp, cv.RETR_LIST, cv.CHAIN_APPROX_SIMPLE)
             contours.sort(key=contourRatio, reverse=True)
+            i += 1
+        i -= 1
 
         while len(contours) < self.nFeatures and i > 0:
             i -= 1
@@ -145,9 +142,56 @@ class AdaptiveOpen:
             _, contours, hier = cv.findContours(imgTemp, cv.RETR_LIST, cv.CHAIN_APPROX_SIMPLE)
             contours.sort(key=contourRatio, reverse=True)
 
-        self.iterations = i # save to we don't have to try next time
+        self.iterations = max(i, 0) # save to we don't have to try next time
         img = imgTemp
         self.img = img
+        print("Open iterations:", self.iterations)
+        return img
+
+class AdaptiveErodeKernel:
+    """
+    Iteratively uses "opening" operations until the nr points detected in the 
+    image are as close to but at least the desired nFeatures.
+    The number of iterations are saved until next call to prevent unecessary reiteration.
+    """
+    def __init__(self, nFeatures, kernelSize=15, kernelType=cv.MORPH_ELLIPSE, startIterations=1, maxIter=10):
+        self.iterations = startIterations
+        self.maxIter = maxIter
+        self.nFeatures = nFeatures
+        self.kernelSize = kernelSize
+        self.kernel = cv.getStructuringElement(kernelType, (kernelSize,kernelSize)) 
+        self.img = None
+
+    def process(self, img):
+        # this removes reflections effectively at close distances but reduces range
+        _, contours, hier = cv.findContours(img, cv.RETR_LIST, cv.CHAIN_APPROX_SIMPLE)
+        contours.sort(key=contourRatio, reverse=True)
+
+        imgTemp = img.copy()        
+        i = self.iterations
+        while len(contours) >= self.nFeatures and i <= self.maxIter:
+            # doesnt really matter if open or erode is used?
+            kernel = cv.getStructuringElement(cv.MORPH_ELLIPSE, (i, i))
+            imgTemp = cv.morphologyEx(img.copy(), cv.MORPH_OPEN, kernel)
+            _, contours, hier = cv.findContours(imgTemp, cv.RETR_LIST, cv.CHAIN_APPROX_SIMPLE)
+            #contours = removeContoursOnEdges(contours)
+            contours.sort(key=contourRatio, reverse=True)
+            i += 1
+        i -= 1
+
+        while len(contours) < self.nFeatures and i > 1:
+            i -= 1
+            # doesnt really matter if open or erode is used?
+            kernel = cv.getStructuringElement(cv.MORPH_ELLIPSE, (i, i))
+            imgTemp = cv.morphologyEx(img.copy(), cv.MORPH_OPEN, kernel)
+            _, contours, hier = cv.findContours(imgTemp, cv.RETR_LIST, cv.CHAIN_APPROX_SIMPLE)
+            #contours = removeContoursOnEdges(contours)
+            contours.sort(key=contourRatio, reverse=True)
+
+        self.iterations = max(i, 1) # save to we don't have to try next time
+        img = imgTemp
+        self.img = img
+        print("Kernel size:", self.iterations)
         return img
 
 def drawInfo(img, center, text, color=(255, 0, 0)):
@@ -176,6 +220,37 @@ def fillContours(img, ratio):
             cv.fillPoly(img, pts=[cnt], color=(255,255,255))
 
     return img
+
+def fillContoursOnEdges(img, resolution):
+    _, contours, hier = cv.findContours(img, cv.RETR_LIST, cv.CHAIN_APPROX_SIMPLE)
+    cv.fillPoly(img, contoursOnEdges(contours, resolution), color=(0, 0, 0))
+    return img
+
+def contoursOnEdges(contours, resolution):
+    onEdges = []
+    for cnt in contours:
+        leftmost = tuple(cnt[cnt[:,:,0].argmin()][0])
+        rightmost = tuple(cnt[cnt[:,:,0].argmax()][0])
+        topmost = tuple(cnt[cnt[:,:,1].argmin()][0])
+        bottommost = tuple(cnt[cnt[:,:,1].argmax()][0])
+        if leftmost[0] == 0 or rightmost[0] == resolution[1]-1 or topmost[1] == 0 or bottommost[1] == resolution[0]-1:
+            onEdges.append(cnt)
+
+    return onEdges
+
+def removeContoursOnEdges(contours):
+    newContours = []
+    for cnt in contours:
+        leftmost = tuple(cnt[cnt[:,:,0].argmin()][0])
+        rightmost = tuple(cnt[cnt[:,:,0].argmax()][0])
+        topmost = tuple(cnt[cnt[:,:,1].argmin()][0])
+        bottommost = tuple(cnt[cnt[:,:,1].argmax()][0])
+        if leftmost[0] != 0 and rightmost[0] != 639 and topmost[1] != 0 and bottommost[1] != 479:
+            print(leftmost)
+            newContours.append(cnt)
+        else:
+            print("Removed contour on edge")
+    return newContours
 
 def colorThreshold(frame):
     global image_msg
@@ -244,6 +319,10 @@ def contourAreaOutliers(contours):
     return [cnt for outlier, cnt in zip(outliers, contours) if not outlier]
     #return outliers
 
+def weightedCentroid(gray):
+    # https://stackoverflow.com/questions/53719588/calculate-a-centroid-with-opencv
+    pass
+
 def _contours(gray, nFeatures, drawImg=None):
     mask = np.zeros(gray.shape,np.uint8)
     _, contours, hier = cv.findContours(gray.copy(), cv.RETR_LIST, cv.CHAIN_APPROX_SIMPLE)
@@ -278,20 +357,28 @@ def _contours(gray, nFeatures, drawImg=None):
 
     return points
 
-def featureAssociation(featurePoints, detectedPoints):
+def featureAssociation(featurePoints, detectedPoints, featurePointsGuess=None):
+    """
+    Assumes that the orientation of the feature model is approximately the identity matrix relative to the camera frame
+    i.e. x and y values can be handled directly in the image plane
+    """
     if len(detectedPoints) < len(featurePoints):
         print("Not enough features detected")
-        return [], [], [0, 0]
+        return [], []
 
-    centerx, centery  = np.mean(detectedPoints, axis=0)
-    xys = np.array(detectedPoints) - np.array((centerx, centery))
-    maxR = np.max(np.linalg.norm(xys, axis=1))
+    if featurePointsGuess is None:
+        centerx, centery  = np.mean(detectedPoints, axis=0)
+        xys = np.array(detectedPoints)
+        maxR = np.max(np.linalg.norm(np.array(detectedPoints) - np.array((centerx, centery)), axis=1))
+        maxFR = np.max(np.linalg.norm(featurePoints[:, :2], axis=1)) # only x, y
+        # a guess of where the features are based on the max radius of feature 
+        # points and the max radius of the detected points
+        featurePointsGuess = [(maxR*x/maxFR + centerx, maxR*y/maxFR + centery) for x,y,_,_ in featurePoints]
+    else:
+        centerx, centery  = np.mean(detectedPoints, axis=0)
+        xys = np.array(detectedPoints)
+        
 
-    maxFR = np.max(np.linalg.norm(featurePoints[:, :2], axis=1)) # only x, y
-    # a guess of where the features are based on the max radius of feature 
-    # points and the max radius of the detected points
-    featurePointsScaled = [(maxR*x/maxFR, maxR*y/maxFR) for x,y,_,_ in featurePoints]
-    
     minDist = np.inf
     minDistPointIdx = None
     associatedPoints = []
@@ -299,7 +386,7 @@ def featureAssociation(featurePoints, detectedPoints):
     xys = [tuple(p) for p in xys]
     
     for i in range(len(featurePoints)):
-        fx, fy = featurePointsScaled[i]
+        fx, fy = featurePointsGuess[i]
         for j in range(len(detectedPoints)):
             cx, cy = xys[j]
             d = np.sqrt( pow(cx-fx, 2) + pow(cy-fy, 2))
@@ -307,72 +394,197 @@ def featureAssociation(featurePoints, detectedPoints):
                 minDist = d
                 minDistPointIdx = j
 
-        p = detectedPoints[minDistPointIdx]
+        #p = detectedPoints[minDistPointIdx]
         associatedPoints.append(detectedPoints[minDistPointIdx])
         del xys[minDistPointIdx]
         del detectedPoints[minDistPointIdx]
         
         minDist = np.inf
         minDistPointIdx = None
-    #return np.array(associatedPoints), np.array(newFeaturePoints), featurePointsScaled, (centerx, centery)
-    return np.array(associatedPoints), featurePointsScaled, (centerx, centery)
+    
+    return np.array(associatedPoints, dtype=np.float32), featurePointsGuess
     
 class ThresholdFeatureExtractor:
-    def __init__(self, nFeatures, p=.02):
-        self.nFeatures = nFeatures
+    # Check this for contour properties
+    # https://opencv24-python-tutorials.readthedocs.io/en/latest/py_tutorials/py_imgproc/py_contours/py_contour_properties/py_contour_properties.html
+    def __init__(self, featureModel, camera, p=.02, erosionKernelSize=5, maxIter=10, useKernel=True, drawContours=False):
+        self.featureModel = featureModel
+        self.camera = camera
+        self.nFeatures = len(self.featureModel.features)
         self.pHold = PercentageThreshold(p)
-        self.adaOpen = AdaptiveOpen(nFeatures, kernelSize=5)
+        self.adaOpen = AdaptiveOpen(self.nFeatures, kernelSize=erosionKernelSize, maxIter=maxIter)
+        if useKernel:
+            self.adaOpen = AdaptiveErodeKernel(self.nFeatures, kernelSize=erosionKernelSize, maxIter=maxIter)
+        self.drawContours = drawContours
 
-    def __call__(self, gray, imgColor):
+    #def regionOfInterest(self, img, estTranslationVector, estRotationVector, wMargin, hMargin):
+    def regionOfInterest(self, img, featurePointsGuess, wMargin, hMargin):
+        featurePointsGuess = self.camera.metersToUV(featurePointsGuess)
+        topMost = [None, np.inf]
+        rightMost = [-np.inf]
+        bottomMost = [None, -np.inf]
+        leftMost = [np.inf]
+        for p in featurePointsGuess:
+            if p[1] < topMost[1]:
+                topMost = p
+
+            if p[0] > rightMost[0]:
+                rightMost = p
+
+            if p[1] > bottomMost[1]:
+                bottomMost = p
+
+            if p[0] < leftMost[0]:
+                leftMost = p
+        
+        topMost[1] -= hMargin
+        rightMost[0] += wMargin
+        bottomMost[1] += hMargin
+        leftMost[0] -= wMargin
+        cnt = np.array([topMost, rightMost, bottomMost, leftMost], dtype=np.int32)
+        x, y, w, h = cv.boundingRect(cnt)
+        roiCnt = np.array([[x, y], [x+w, y], [x+w, y+h], [x, y+h]], dtype=np.int32)
+        #img = cv.rectangle(img, (x-wMargin,y-hMargin), (x+w+wMargin, y+h+hMargin), (255, 255, 255), 10, cv.LINE_AA)
+
+        return roiCnt
+
+    def projectedFeatures(self, estTranslationVec, estRotationVec):
+        points = self.featureModel.features[:, :3].copy()
+        projPoints, jacobian = cv.projectPoints(points, 
+                                                estRotationVec, 
+                                                estTranslationVec, 
+                                                self.camera.cameraMatrix, 
+                                                self.camera.distCoeffs)
+        projPoints = np.array([p[0] for p in projPoints])
+
+        return projPoints
+
+    def __call__(self, gray, imgColor, estTranslationVec=None, estRotationVec=None):
         img = gray.copy()
-        img = self.pHold.process(img)
+        
+        # we need to rotate the points if we want the relative orientation to be different, 
+        # otherwise feature association will fail
+        points3DAss = np.matmul( R.from_euler("XYZ", (0, np.pi, 0)).as_dcm(), self.featureModel.features[:, :3].transpose()).transpose()    
+        points3DAss = np.append(points3DAss, np.ones((points3DAss.shape[0], 1)), axis=1)
 
-        _, contours, hier = cv.findContours(img, cv.RETR_LIST, cv.CHAIN_APPROX_SIMPLE)
-        cv.drawContours(imgColor, contours, -1, (0, 0, 255), 3)
+        featurePointsGuess = None
+        if estTranslationVec is not None:
+            roiImg = img.copy()
+            #roiCnt = self.regionOfInterest(img, estTranslation, estRotation, wMargin=30, hMargin=30)
+            featurePointsGuess = self.projectedFeatures(estTranslationVec, estRotationVec)
+            roiCnt = self.regionOfInterest(img, featurePointsGuess, wMargin=30, hMargin=30)
+            mask = np.zeros(roiImg.shape, np.int8)
+            mask = cv.drawContours(mask, [roiCnt], -1, (255), -1)
+            #roiImg = cv.rectangle(roiImg, (x,y), (x+w, y+h), (0, 255, 0), 10, cv.LINE_AA)
+            
+            roiImg = cv.bitwise_and(img, img, mask=mask)
+            cv.imshow("bounding box", roiImg)
+            img = roiImg
 
-        contours.sort(key=contourRatio, reverse=True)
-        #contours = contourAreaOutliers(contours) # dont want to remove outliers here, remove noise first
+            img = self.pHold.process(img)
 
-        img = self.adaOpen.process(img) # removes noise
-        print("Open iterations:", self.adaOpen.iterations)
-        _, contoursNew, hier = cv.findContours(img, cv.RETR_LIST, cv.CHAIN_APPROX_SIMPLE)
-        cv.drawContours(imgColor, contoursNew, -1, (0, 255, 0), 3)
+            _, contours, hier = cv.findContours(img, cv.RETR_LIST, cv.CHAIN_APPROX_SIMPLE)
+            #if self.drawContours: cv.drawContours(imgColor, contours, -1, (0, 0, 255), 3)
+            
 
-        # error: The truth value of an array with more than one element is ambiguous
-        #contoursNew = np.array(contoursNew)
-        #ds = contourAreaDistanceFromMean(contoursNew)
-        #print(ds.shape)
-        #print(contoursNew.shape)
-        #contoursNew = [cnt for d, cnt in sorted(zip(ds, contoursNew))]
-        contoursNew.sort(key=contourRatio, reverse=True)
-        #contoursNew = contoursNew[:self.nFeatures]
-
-        points = []
-        for cntOld in contours:
-            #if len(points) == self.nFeatures: # this removes potential extra contours
-            #    break
-            for cntNew in contoursNew:
-                # Check if new contour is inside old
-                area = cv.contourArea(cntNew)
+            points = []
+            for cnt in contours:
+                area = cv.contourArea(cnt)
                 if area == 0:
-                    cx, cy = cntNew[0][0]
+                    cx, cy = cnt[0][0]
                 else:
-                    M = cv.moments(cntNew)
+                    M = cv.moments(cnt)
                     cx = int(M['m10']/M['m00'])
                     cy = int(M['m01']/M['m00'])
-
-                result = cv.pointPolygonTest(cntOld, (cx,cy), False) 
-                if result in (1, 0): # inside or on the contour
                     points.append((cx, cy))
-                    ratio = contourRatio(cntNew)
-                    cv.drawContours(imgColor,[cntNew], 0, (255, 0, 0), -1) # or maybe draw new??
-                    drawInfo(imgColor, (cx+10, cy-10), str(ratio), color=(255, 0, 255))
-                    #break We don't break here, the old contour might be two overlapping lights
 
-        
-        print("Npoints:", len(points))
-        print("Threshold:", self.pHold.threshold)
-        return img, points
+            if len(points) == 0:
+                return img, []
+
+            points = np.array(points, dtype=np.float32)
+            points[:,0] *= self.camera.pixelWidth
+            points[:,1] *= self.camera.pixelHeight
+
+            associatedPoints, featurePointsGuess = featureAssociation(points3DAss, points, featurePointsGuess)
+
+            return img, associatedPoints
+        else:
+            #img = cv.GaussianBlur(img,(5,5),0)
+            
+            # https://docs.opencv.org/4.5.3/d4/d86/group__imgproc__filter.html#ga9d7064d478c95d60003cf839430737ed
+            #blur = cv.bilateralFilter(img,5,200,50) # smoothing but, keeps edges. Makes the adaOpen faster
+            #img = blur
+            img = self.pHold.process(img)
+            img = fillContoursOnEdges(img, self.camera.resolution)
+
+            _, contours, hier = cv.findContours(img, cv.RETR_LIST, cv.CHAIN_APPROX_SIMPLE)
+            if self.drawContours: cv.drawContours(imgColor, contours, -1, (0, 0, 255), 3)
+
+            contours.sort(key=contourRatio, reverse=True)
+            #contours = contourAreaOutliers(contours) # dont want to remove outliers here, remove noise first
+
+            img = self.adaOpen.process(img) # removes noise
+            
+            _, contoursNew, hier = cv.findContours(img, cv.RETR_LIST, cv.CHAIN_APPROX_SIMPLE)
+            if self.drawContours: cv.drawContours(imgColor, contoursNew, -1, (0, 255, 0), 3)
+
+            # error: The truth value of an array with more than one element is ambiguous
+            #contoursNew = np.array(contoursNew)
+            #ds = contourAreaDistanceFromMean(contoursNew)
+            #print(ds.shape)
+            #print(contoursNew.shape)
+            #contoursNew = [cnt for d, cnt in sorted(zip(ds, contoursNew))]
+            contoursNew.sort(key=contourRatio, reverse=True)
+            #contoursNew = contoursNew[:self.nFeatures]
+
+            # contours are sorted by ratio but using the initial shape, not the eroded one
+            # conuld use the "opened" ratio aswell?
+            points = []
+            for cntOld in contours:
+                #if len(points) == self.nFeatures: # this removes potential extra contours
+                #    break
+                for cntNew in contoursNew:
+                    # Check if new contour is inside old
+                    area = cv.contourArea(cntNew)
+                    if area == 0:
+                        cx, cy = cntNew[0][0]
+                    else:
+                        M = cv.moments(cntNew)
+                        cx = int(M['m10']/M['m00'])
+                        cy = int(M['m01']/M['m00'])
+
+                    result = cv.pointPolygonTest(cntOld, (cx,cy), False) 
+                    if result in (1, 0): # inside or on the contour
+                        points.append((cx, cy))
+                        ratio = contourRatio(cntNew)
+                        if self.drawContours:
+                            cv.drawContours(imgColor,[cntNew], 0, (255, 0, 0), -1) # or maybe draw new??
+                            drawInfo(imgColor, (cx+10, cy-10), str(ratio), color=(255, 0, 255))
+                        #break We don't break here, the old contour might be two overlapping lights
+
+            points = points[:self.nFeatures]
+            if len(points) == 0:
+                return img, []
+
+            points = np.array(points, dtype=np.float32)
+            points[:,0] *= self.camera.pixelWidth
+            points[:,1] *= self.camera.pixelHeight
+
+            associatedPoints, featurePointsGuess = featureAssociation(points3DAss, points, featurePointsGuess)
+
+            for i in range(len(associatedPoints)):
+                # convert points to pixels
+                px = associatedPoints[i][0] / self.camera.pixelWidth
+                py = associatedPoints[i][1] / self.camera.pixelHeight
+                fpx = featurePointsGuess[i][0] / self.camera.pixelWidth
+                fpy = featurePointsGuess[i][1] / self.camera.pixelHeight
+                drawInfo(imgColor, (int(px), int(py)), str(i))
+                drawInfo(imgColor, (int(fpx), int(fpy)), str(i), color=(0, 0, 255))
+                cv.circle(imgColor, (int(px), int(py)), 2, (255, 0, 0), 3)
+
+            print("Npoints:", len(points))
+            print("Threshold:", self.pHold.threshold)
+            return img, associatedPoints
 
 if __name__ == '__main__':
     nFeatures = 4

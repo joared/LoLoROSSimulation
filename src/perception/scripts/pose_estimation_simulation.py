@@ -7,6 +7,8 @@ from scipy.spatial.transform import Rotation as R, rotation
 from scipy.spatial.transform import Slerp
 from tf.transformations import quaternion_multiply
 
+import sys
+sys.path.append("../../simulation/scripts")
 from coordinate_system import CoordinateSystem, CoordinateSystemArtist
 
 def projectPoints(points3D, cameraMatrix):
@@ -76,7 +78,7 @@ def plotAxis(img, rotation_vector, translation_vector, camera_matrix, dist_coeff
     zDir, jacobian = cv.projectPoints(np.array([(0.0, 0.0, 100.0)]), rotation_vector, translation_vector, camera_matrix, dist_coeffs)
     xDir, jacobian = cv.projectPoints(np.array([(100.0, 0.0, 0)]), rotation_vector, translation_vector, camera_matrix, dist_coeffs)
     yDir, jacobian = cv.projectPoints(np.array([(0.0, 100.0, 0)]), rotation_vector, translation_vector, camera_matrix, dist_coeffs)
-
+    print(zDir)
     
     for d, c in zip((xDir, yDir, zDir), ((0,0,255), (0,255,0), (255,0,0))):
         center = projectPoints(translation_vector.transpose(), camera_matrix)
@@ -129,6 +131,9 @@ def polygon(rad, n, shift=False, zShift=0):
 def pose2():
     # Tutorial: https://www.pythonpool.com/opencv-solvepnp/
     img = cv.imread('../image_dataset/lights_in_scene.png')
+    img = np.zeros((480, 640))
+    img = np.stack((img,)*3, axis=-1)
+    #img = cv.cvtColor(img, cv.COLOR_GRAY2BGR)
 
     px = 320
     py = 240
@@ -146,7 +151,7 @@ def pose2():
     square = np.array([[0., 0., 0., 1.],
                          [-halfHyp, -halfHyp, 0, 1],
                          [halfHyp, -halfHyp, 0, 1],
-                         [halfHyp + 20, halfHyp, 0, 1],
+                         [halfHyp + 50, halfHyp, 0, 1],
                          [-halfHyp, halfHyp, 0, 1]], dtype=np.float32)
 
     squareTwist = np.array([[0, 0, 0, 1],
@@ -157,16 +162,20 @@ def pose2():
                         [-100, 100, 0, 1]], dtype=np.float32)
 
     points_3D = polygon(rad=100, n=4, shift=True, zShift=0)
+    #points_3D = np.append(points_3D, polygon(rad=100, n=4, shift=False, zShift=20), axis=0)
+    
     #points_3D = np.append(points_3D, polygon(rad=20, n=3, shift=True, zShift=-100), axis=0)
     #points_3D = np.append(points_3D, [[0, 0, 0, 1.]], axis=0)
-    #points_3D = np.append(points_3D, [[0, 0, 100, 1.]], axis=0)
+    #points_3D = np.append(points_3D, [[0, 0, 20, 1.]], axis=0)
     #points_3D = np.append(points_3D, [[0,-30,-200,1]], axis=0)
     #points_3D = np.append(points_3D, [[-30,30,-200,1]], axis=0)
     #points_3D = np.append(points_3D, [[30,30,-200,1]], axis=0)
     #points_3D = np.append(points_3D, [[-30,0,0,1]], axis=0)
     #points_3D = np.append(points_3D, [[30,0,0,1]], axis=0)
+    #points_3D = square
+    print(points_3D.shape)
 
-    pz = 600.
+    pz = 1200.
     pzGuess = 800.
     ax = 0#np.pi/4
     ay = np.pi
@@ -189,7 +198,7 @@ def pose2():
     csArt2 = CoordinateSystemArtist(cs2)
 
     errors = []
-    nIterations = 300
+    nIterations = 500
     start = time.time()
     for i in range(nIterations):
         
@@ -200,7 +209,7 @@ def pose2():
         #theta += 0.05
         #pz += 15
         #ax += 0.03
-        #ay += 0.06*np.sin(i*0.07-np.pi/2)
+        ay += 0.06*np.sin(i*0.07-np.pi/2)
         #az += 0.01
 
         r = R.from_euler("XYZ", (ax, ay, az))
@@ -242,7 +251,7 @@ def pose2():
                                                                    #flag=cv.SOLVEPNP_EPNP)
 
         #print("NSOLUTIONS:", len(rotation_vector))
-        #print(rotation_vector)
+
         if not success:
             print("FAILED PnP")
 
@@ -350,10 +359,10 @@ def pose2():
         cv.imshow("Image", imgTemp)
         cv.waitKey(10)
         rotMat = R.from_rotvec(rotation_vector[:,0].transpose()).as_dcm()
-        cs.setTransform([0, 0, 0], np.array(rotMat))
+        cs.setTransform([1, 0, 0], np.array(rotMat))
         
         rotMat = R.from_rotvec(rotation).as_dcm()
-        cs2.setTransform([0, 0, 0], np.array(rotMat))
+        cs2.setTransform([-1, 0, 0], np.array(rotMat))
 
         axes.cla()
         size = 2

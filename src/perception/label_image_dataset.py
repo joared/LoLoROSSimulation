@@ -2,7 +2,7 @@ import sys
 from os.path import isfile, join
 from os import listdir
 import os
-
+import time
 import cv2 as cv
 import matplotlib.pyplot as plt
 import numpy as np
@@ -179,6 +179,50 @@ def readLabeledImages(datasetPath, labelFile):
 
     return labeledImgs
 
+def labelVideo(filePath, featExtClass):
+    cap = cv.VideoCapture(filePath)
+    if (cap.isOpened()== False):
+        print("Error opening video stream or file")
+    featExt = featExtClass(1, p=0.1, erosionKernelSize=9, maxIter=10)
+    
+    fourcc = cv.VideoWriter_fourcc(*'MP4V')
+    #out = cv.VideoWriter('output.mp4',fourcc, 30.0, (1920,1080))
+
+    avgFrameRate = 0
+    N = 0
+    i = 0
+    while(cap.isOpened()):
+        ret, frame = cap.read()
+        i += 1
+        print(i)
+        if ret == True:
+            gray = cv.cvtColor(frame, cv.COLOR_BGR2GRAY)
+            timeWait = 1
+            if 250 < i < 850 or 1300 < i < 1400 or 2200 < i < 2550: # FILE0151
+                start = time.time()
+                N += 1
+            #if 200 < i < 820: # FILE0147
+            #if 70 < i < 500: # FILE0148
+            #if False:
+            #if 90 < i < 530: # FILE0149
+                _, points = featExt(gray, frame)
+                elapsed = time.time() - start
+                frameRate = 1/elapsed
+                avgFrameRate = ((N-1)*avgFrameRate + frameRate)/N
+                if points:
+                    cv.circle(frame, points[0], 10, (255, 0, 0), -1)
+                    timeWait = 1
+                print(avgFrameRate)
+            #out.write(frame)
+                cv.imshow('Frame',frame)
+            if cv.waitKey(timeWait) & 0xFF == ord('q'):
+                break
+        else:
+            break
+    cap.release()
+    #out.release()
+    cv.destroyAllWindows()
+
 def labelImages(datasetPath, labelFile):
     imgPaths = getImagePaths(datasetPath)
     labeledImgs = readLabeledImages(datasetPath, labelFile)
@@ -207,14 +251,20 @@ def testFeatureExtractor(featExtClass, datasetPath, labelFile):
     
     for imgPath in labeledImgs:
         img = cv.imread(imgPath)
+        print("Reading {}".format(imgPath))
+        if img is None:
+            print("'{}' not found, removing from labeled data.".format(imgPath))
+            labeledImgs[imgPath] = []
+            continue
         gray = cv.cvtColor(img, cv.COLOR_BGR2GRAY)
 
         labels = labeledImgs[imgPath]
         nFeatures = len(labels)
 
-        featExt = featExtClass(nFeatures, p=0.1)
+        featExt = featExtClass(nFeatures, p=0.1, useKernel=False)
         _, points = featExt(gray, img.copy())
-        #_, points = featExt(gray, img)
+        _, points = featExt(gray, img)
+        points = points[:nFeatures]
 
         for i, errCircle in enumerate(labels):
             drawErrorCircle(img, errCircle, i, color=(0, 255, 0))
@@ -242,8 +292,13 @@ def testFeatureExtractor(featExtClass, datasetPath, labelFile):
             if p not in classifiedPoints:
                 cv.circle(img, p, 1, (0, 0, 255), 2)
 
+        font = cv.FONT_HERSHEY_SIMPLEX
+        fontScale = 1
+        thickness = 2
         infoText = "{}/{}".format(len(classifiedPoints), len(points))
-        cv.putText(img, infoText, (10, 10), font, fontScale, color, thickness, cv.LINE_AA)
+        cv.putText(img, infoText, (30, 30), font, fontScale, (0, 255, 0), thickness, cv.LINE_AA)
+        cv.imshow("bin", featExt.pHold.img)
+        cv.imshow("bin open", featExt.adaOpen.img)
         cv.imshow("image", img)
         cv.waitKey(0)
 
@@ -253,5 +308,7 @@ if __name__ == "__main__":
 
     datasetPath = "image_dataset"
     labelFile = "labels.txt"
-    labelImages(datasetPath, labelFile)
+
+    labelVideo("LoLo/FILE0151.MP4", ThresholdFeatureExtractor)
+    #labelImages(datasetPath, labelFile)
     #testFeatureExtractor(ThresholdFeatureExtractor, datasetPath, labelFile)
