@@ -129,12 +129,15 @@ def polygon(rad, n, shift=False, zShift=0):
     return points
 
 def pose2():
+    import sys
+    sys.path.append("../../simulation/scripts")
+    from camera import usbCamera
     # Tutorial: https://www.pythonpool.com/opencv-solvepnp/
     img = cv.imread('../image_dataset/lights_in_scene.png')
     img = np.zeros((480, 640))
     img = np.stack((img,)*3, axis=-1)
-    #img = cv.cvtColor(img, cv.COLOR_GRAY2BGR)
 
+    """
     px = 320
     py = 240
     camera_matrix = np.array([[812.2540283203125,   0,    		        px],
@@ -144,7 +147,12 @@ def pose2():
     camera_matrix[0,0] = 800
     camera_matrix[1,1] = 800
     dist_coeffs = np.zeros((4,1), dtype=np.float32)
-
+    """
+    camera = usbCamera
+    camera_matrix = camera.cameraMatrixPixel
+    px = camera_matrix[0, 2]#/camera.pixelWidth
+    py = camera_matrix[1, 1]#/camera.pixelHeight
+    dist_coeffs = camera.distCoeffs
     # if the features was on the image plane
     # first point has to be in center!!! Otherwise plot doesn't work
     halfHyp = 100*np.cos(np.pi/4)
@@ -173,10 +181,11 @@ def pose2():
     #points_3D = np.append(points_3D, [[-30,0,0,1]], axis=0)
     #points_3D = np.append(points_3D, [[30,0,0,1]], axis=0)
     #points_3D = square
+    #points_3D[:, :3] *= camera.pixelWidth
     print(points_3D.shape)
 
-    pz = 1200.
-    pzGuess = 800.
+    pz = 1200.#*camera.pixelWidth
+    pzGuess = 800.#*camera.pixelWidth
     ax = 0#np.pi/4
     ay = np.pi
     ayGuess = np.pi
@@ -349,11 +358,11 @@ def pose2():
         #plotAxis(imgTemp, rotation, translation, camera_matrix, dist_coeffs)
 
         # estimated measure points_2D and points_2D_noised should be used?: no because thats just what the PnP algotihm based the pose estimation on
-        plotAxis(imgTemp, rotation_vector, translation_vector, camera_matrix, dist_coeffs)
+        #plotAxis(imgTemp, rotation_vector, translation_vector, camera_matrix, dist_coeffs)
         plotPose(imgTemp, rotation_vector, translation_vector, camera_matrix, dist_coeffs, pointsSolved2D, color=(0,0,255))
         
         # estimated
-        #plotPose(imgTemp, rotEst, transEst, camera_matrix, dist_coeffs, pointsEst2D, color=(255,255,0))
+        plotPose(imgTemp, rotEst, transEst, camera_matrix, dist_coeffs, pointsEst2D, color=(255,255,0))
         #plotAxis(imgTemp, rotEst, transEst, camera_matrix, dist_coeffs)
 
         cv.imshow("Image", imgTemp)

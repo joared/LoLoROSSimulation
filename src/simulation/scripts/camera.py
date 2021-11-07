@@ -12,9 +12,9 @@ class Camera(CoordinateSystem):
     def __init__(self, cameraMatrix, distCoeffs, resolution, pixelWidth, pixelHeight, hz, *args, **kwargs):
         CoordinateSystem.__init__(self, *args, **kwargs)
         self.cameraMatrixPixel = cameraMatrix
-        self.cameraMatrix = cameraMatrix.copy()
-        self.cameraMatrix[0, :] *= pixelWidth
-        self.cameraMatrix[1, :] *= pixelHeight
+        self._cameraMatrix = cameraMatrix.copy()
+        self._cameraMatrix[0, :] *= pixelWidth
+        self._cameraMatrix[1, :] *= pixelHeight
         
         self.distCoeffs = distCoeffs
         self.resolution = resolution # maybe change resolution to be (width, height) instead of (height, width)
@@ -30,6 +30,10 @@ class Camera(CoordinateSystem):
         f = self.cameraMatrix[1][1] # focal length (take average between fx and fy?)
         self.f = f
         self.imSize = 1
+
+    @property
+    def cameraMatrix(self):
+        return self._cameraMatrix.copy()
 
     def project(self, point):
         """

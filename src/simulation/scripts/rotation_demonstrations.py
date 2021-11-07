@@ -25,7 +25,7 @@ def howRollCanBeAffectedByAngleAxis():
     r = R.from_euler(eulerOrder, euler)
     rotation = r.as_rotvec().transpose()
     rotation2 = rotation.copy()
-    nIter = 200
+    nIter = 100
 
     yPositions = []
     yPositions2 = []

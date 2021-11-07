@@ -11,6 +11,7 @@ import numpy as np
 import matplotlib.pyplot as plt
 from feature_extraction import featureAssociation, drawInfo, ThresholdFeatureExtractor
 from pose_estimation import DSPoseEstimator
+from pose_estimation_utils import plotPoints, plotAxis
 # remove this eventually
 import sys
 sys.path.append("../../simulation/scripts")
@@ -19,68 +20,6 @@ from feature import FeatureModel, polygon
 from coordinate_system import CoordinateSystem, CoordinateSystemArtist
 
 from scipy.spatial.transform import Rotation as R
-
-def plotAxis(img, translationVector, rotationVector, camera, points):
-    points = points[:, :3].copy()
-    #print(points)
-    rad = 0.043
-    projPoints, jacobian = cv.projectPoints(points, 
-                                            rotationVector, 
-                                            translationVector, 
-                                            camera.cameraMatrix, 
-                                            camera.distCoeffs)
-    projPoints = np.array([p[0] for p in projPoints])
-
-    zDir, jacobian = cv.projectPoints(np.array([(0.0, 0.0, rad)]), 
-                                      rotationVector, 
-                                      translationVector, 
-                                      camera.cameraMatrix, 
-                                      camera.distCoeffs)
-
-    yDir, jacobian = cv.projectPoints(np.array([(0.0, rad, 0.0)]), 
-                                      rotationVector, 
-                                      translationVector, 
-                                      camera.cameraMatrix, 
-                                      camera.distCoeffs)
-
-    xDir, jacobian = cv.projectPoints(np.array([(rad, 0.0, 0.0)]), 
-                                      rotationVector, 
-                                      translationVector, 
-                                      camera.cameraMatrix, 
-                                      camera.distCoeffs)
-
-    center, jacobian = cv.projectPoints(np.array([(0.0, 0.0, 0.0)]), 
-                                        rotationVector, 
-                                        translationVector, 
-                                        camera.cameraMatrix, 
-                                        camera.distCoeffs)
-
-    center = center[0][0][0] / camera.pixelWidth, center[0][0][1] / camera.pixelHeight   
-    for d, c in zip((xDir, yDir, zDir), ((0,0,255), (0,255,0), (255,0,0))):
-        cx = center[0]
-        cy = center[1]
-        point1 = (int(round(cx)), int(round(cy)))
-        point2 = (int(round(d[0][0][0] / camera.pixelWidth)), int(round(d[0][0][1] / camera.pixelHeight)))
-        cv.line(img, point1, point2, c, 5)
-
-    for p in projPoints:
-        x = int( p[0] / camera.pixelWidth )
-        y = int( p[1] / camera.pixelHeight )
-        radius = 2
-        cv.circle(img, (x,y), radius, (0, 0, 255), 3)
-
-def plotPoints(img, translationVector, rotationVector, camera, points):
-    projPoints, jacobian = cv.projectPoints(points, 
-                                        rotationVector, 
-                                        translationVector, 
-                                        camera.cameraMatrix, 
-                                        camera.distCoeffs)
-    projPoints = np.array([p[0] for p in projPoints])
-    for p in projPoints:
-        x = int( p[0] / camera.pixelWidth )
-        y = int( p[1] / camera.pixelHeight )
-        radius = 2
-        cv.circle(img, (x,y), radius, (0, 0, 255), 3)
 
 def callback(msg):
     global image_msg
@@ -96,7 +35,7 @@ class Perception:
 def main():
     global image_msg
 
-    featureModel = FeatureModel([0.06, 0], [4, 1], [True, False], [0, 0.043])
+    featureModel = FeatureModel([0, 0.06], [1, 4], [False, True], [0.043, 0])
     points3D = featureModel.features
 
     # points expressed as if the relative orientation between camera and featureModel is the identity matrix
@@ -116,7 +55,7 @@ def main():
 
     camera = usbCamera
     featureExtractor = ThresholdFeatureExtractor(featureModel=featureModel, camera=camera, p=0.02, erosionKernelSize=7, maxIter=10, useKernel=False)
-    poseEstimator = DSPoseEstimator(camera)
+    poseEstimator = DSPoseEstimator(camera, ignoreRoll=False, ignorePitch=False)
 
     fig = plt.figure()
     axes = fig.gca(projection='3d')

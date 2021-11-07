@@ -8,21 +8,13 @@ from scipy.spatial.transform import Rotation as R, rotation
 from scipy.spatial.transform import Slerp
 import scipy
 
-def polygon(rad, n, shift=False, zShift=0):
-    theta = 2*np.pi/n
-    if shift is True:
-        #points = np.array([[0, 0, 0, 1]] + [ [rad*np.sin(theta*(i + 0.5)), rad*np.cos(theta*(i + 0.5)), 0, 1] for i in range(n)], dtype=np.float32)
-        points = np.array([ [rad*np.sin(theta*(i + 0.5)), rad*np.cos(theta*(i + 0.5)), zShift, 1] for i in range(n)] , dtype=np.float32)
-    else:
-        points = np.array([ [rad*np.sin(theta*i), rad*np.cos(theta*i), zShift, 1] for i in range(n)], dtype=np.float32)
-
-    return points
-
 class DSPoseEstimator:
     #def __init__(self, auv, dockingStation, camera, featureModel):
     def __init__(self, camera, featureModel=None, ignoreRoll=False, ignorePitch=False):
         self.camera = camera
         self.poseAcquired = False
+
+        # both of these needs to be clearly defined what they mean
         self.ignoreRoll = ignoreRoll
         self.ignorePitch = ignorePitch
         #self.auv = auv
@@ -164,13 +156,19 @@ class DSPoseEstimator:
         self.dsVelocity = vel
         #return translationVector[:, 0], rotationVector[:, 0]
 
-        # cancel roll and pitch
         ay, ax, az = R.from_dcm(self.dsRotation).as_euler("YXZ")
-        if self.ignoreRoll:
-            az = 0
         if self.ignorePitch:
             ax = 0
-        rotMat = R.from_euler("YXZ", (ay, ax, az)).as_dcm() # remove roll info
+        if self.ignoreRoll:
+            az = 0
+        self.dsRotation = R.from_euler("YXZ", (ay, ax, az)).as_dcm()
+        #if self.ignoreRoll and self.ignorePitch:
+        #    ay, ax, az = R.from_dcm(self.dsRotation).as_euler("YXZ")
+        #    self.dsRotation = R.from_euler("YXZ", (ay, 0, 0)).as_dcm()
+        #if self.ignoreRoll and not self.ignorePitch:
+        #    ay, az, ax = R.from_dcm(self.dsRotation).as_euler("YZX")
+        #    self.dsRotation = R.from_euler("YZX", (ay, 0, ax)).as_dcm()
+         # remove roll info
 
         return self.dsTranslation, R.from_dcm(self.dsRotation).as_rotvec()
 

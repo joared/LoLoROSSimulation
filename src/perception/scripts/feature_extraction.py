@@ -481,110 +481,82 @@ class ThresholdFeatureExtractor:
             cv.imshow("bounding box", roiImg)
             img = roiImg
 
-            img = self.pHold.process(img)
+        #img = cv.GaussianBlur(img,(5,5),0)
+        
+        # https://docs.opencv.org/4.5.3/d4/d86/group__imgproc__filter.html#ga9d7064d478c95d60003cf839430737ed
+        #blur = cv.bilateralFilter(img,5,200,50) # smoothing but, keeps edges. Makes the adaOpen faster
+        #img = blur
+        img = self.pHold.process(img)
+        img = fillContoursOnEdges(img, self.camera.resolution)
 
-            _, contours, hier = cv.findContours(img, cv.RETR_LIST, cv.CHAIN_APPROX_SIMPLE)
-            #if self.drawContours: cv.drawContours(imgColor, contours, -1, (0, 0, 255), 3)
-            
+        _, contours, hier = cv.findContours(img, cv.RETR_LIST, cv.CHAIN_APPROX_SIMPLE)
+        if self.drawContours: cv.drawContours(imgColor, contours, -1, (0, 0, 255), 3)
 
-            points = []
-            for cnt in contours:
-                area = cv.contourArea(cnt)
+        contours.sort(key=contourRatio, reverse=True)
+        #contours = contourAreaOutliers(contours) # dont want to remove outliers here, remove noise first
+
+        img = self.adaOpen.process(img) # removes noise
+        
+        _, contoursNew, hier = cv.findContours(img, cv.RETR_LIST, cv.CHAIN_APPROX_SIMPLE)
+        if self.drawContours: cv.drawContours(imgColor, contoursNew, -1, (0, 255, 0), 3)
+
+        # error: The truth value of an array with more than one element is ambiguous
+        #contoursNew = np.array(contoursNew)
+        #ds = contourAreaDistanceFromMean(contoursNew)
+        #print(ds.shape)
+        #print(contoursNew.shape)
+        #contoursNew = [cnt for d, cnt in sorted(zip(ds, contoursNew))]
+        contoursNew.sort(key=contourRatio, reverse=True)
+        #contoursNew = contoursNew[:self.nFeatures]
+
+        # contours are sorted by ratio but using the initial shape, not the eroded one
+        # conuld use the "opened" ratio aswell?
+        points = []
+        for cntOld in contours:
+            #if len(points) == self.nFeatures: # this removes potential extra contours
+            #    break
+            for cntNew in contoursNew:
+                # Check if new contour is inside old
+                area = cv.contourArea(cntNew)
                 if area == 0:
-                    cx, cy = cnt[0][0]
+                    cx, cy = cntNew[0][0]
                 else:
-                    M = cv.moments(cnt)
+                    M = cv.moments(cntNew)
                     cx = int(M['m10']/M['m00'])
                     cy = int(M['m01']/M['m00'])
+
+                result = cv.pointPolygonTest(cntOld, (cx,cy), False) 
+                if result in (1, 0): # inside or on the contour
                     points.append((cx, cy))
+                    ratio = contourRatio(cntNew)
+                    if self.drawContours:
+                        cv.drawContours(imgColor,[cntNew], 0, (255, 0, 0), -1) # or maybe draw new??
+                        drawInfo(imgColor, (cx+10, cy-10), str(ratio), color=(255, 0, 255))
+                    #break We don't break here, the old contour might be two overlapping lights
 
-            if len(points) == 0:
-                return img, []
+        points = points[:self.nFeatures]
+        if len(points) == 0:
+            return img, []
 
-            points = np.array(points, dtype=np.float32)
-            points[:,0] *= self.camera.pixelWidth
-            points[:,1] *= self.camera.pixelHeight
+        points = np.array(points, dtype=np.float32)
+        points[:,0] *= self.camera.pixelWidth
+        points[:,1] *= self.camera.pixelHeight
 
-            associatedPoints, featurePointsGuess = featureAssociation(points3DAss, points, featurePointsGuess)
+        associatedPoints, featurePointsGuess = featureAssociation(points3DAss, points, featurePointsGuess)
 
-            return img, associatedPoints
-        else:
-            #img = cv.GaussianBlur(img,(5,5),0)
-            
-            # https://docs.opencv.org/4.5.3/d4/d86/group__imgproc__filter.html#ga9d7064d478c95d60003cf839430737ed
-            #blur = cv.bilateralFilter(img,5,200,50) # smoothing but, keeps edges. Makes the adaOpen faster
-            #img = blur
-            img = self.pHold.process(img)
-            img = fillContoursOnEdges(img, self.camera.resolution)
+        for i in range(len(associatedPoints)):
+            # convert points to pixels
+            px = associatedPoints[i][0] / self.camera.pixelWidth
+            py = associatedPoints[i][1] / self.camera.pixelHeight
+            fpx = featurePointsGuess[i][0] / self.camera.pixelWidth
+            fpy = featurePointsGuess[i][1] / self.camera.pixelHeight
+            drawInfo(imgColor, (int(px), int(py)), str(i))
+            drawInfo(imgColor, (int(fpx), int(fpy)), str(i), color=(0, 0, 255))
+            cv.circle(imgColor, (int(px), int(py)), 2, (255, 0, 0), 3)
 
-            _, contours, hier = cv.findContours(img, cv.RETR_LIST, cv.CHAIN_APPROX_SIMPLE)
-            if self.drawContours: cv.drawContours(imgColor, contours, -1, (0, 0, 255), 3)
-
-            contours.sort(key=contourRatio, reverse=True)
-            #contours = contourAreaOutliers(contours) # dont want to remove outliers here, remove noise first
-
-            img = self.adaOpen.process(img) # removes noise
-            
-            _, contoursNew, hier = cv.findContours(img, cv.RETR_LIST, cv.CHAIN_APPROX_SIMPLE)
-            if self.drawContours: cv.drawContours(imgColor, contoursNew, -1, (0, 255, 0), 3)
-
-            # error: The truth value of an array with more than one element is ambiguous
-            #contoursNew = np.array(contoursNew)
-            #ds = contourAreaDistanceFromMean(contoursNew)
-            #print(ds.shape)
-            #print(contoursNew.shape)
-            #contoursNew = [cnt for d, cnt in sorted(zip(ds, contoursNew))]
-            contoursNew.sort(key=contourRatio, reverse=True)
-            #contoursNew = contoursNew[:self.nFeatures]
-
-            # contours are sorted by ratio but using the initial shape, not the eroded one
-            # conuld use the "opened" ratio aswell?
-            points = []
-            for cntOld in contours:
-                #if len(points) == self.nFeatures: # this removes potential extra contours
-                #    break
-                for cntNew in contoursNew:
-                    # Check if new contour is inside old
-                    area = cv.contourArea(cntNew)
-                    if area == 0:
-                        cx, cy = cntNew[0][0]
-                    else:
-                        M = cv.moments(cntNew)
-                        cx = int(M['m10']/M['m00'])
-                        cy = int(M['m01']/M['m00'])
-
-                    result = cv.pointPolygonTest(cntOld, (cx,cy), False) 
-                    if result in (1, 0): # inside or on the contour
-                        points.append((cx, cy))
-                        ratio = contourRatio(cntNew)
-                        if self.drawContours:
-                            cv.drawContours(imgColor,[cntNew], 0, (255, 0, 0), -1) # or maybe draw new??
-                            drawInfo(imgColor, (cx+10, cy-10), str(ratio), color=(255, 0, 255))
-                        #break We don't break here, the old contour might be two overlapping lights
-
-            points = points[:self.nFeatures]
-            if len(points) == 0:
-                return img, []
-
-            points = np.array(points, dtype=np.float32)
-            points[:,0] *= self.camera.pixelWidth
-            points[:,1] *= self.camera.pixelHeight
-
-            associatedPoints, featurePointsGuess = featureAssociation(points3DAss, points, featurePointsGuess)
-
-            for i in range(len(associatedPoints)):
-                # convert points to pixels
-                px = associatedPoints[i][0] / self.camera.pixelWidth
-                py = associatedPoints[i][1] / self.camera.pixelHeight
-                fpx = featurePointsGuess[i][0] / self.camera.pixelWidth
-                fpy = featurePointsGuess[i][1] / self.camera.pixelHeight
-                drawInfo(imgColor, (int(px), int(py)), str(i))
-                drawInfo(imgColor, (int(fpx), int(fpy)), str(i), color=(0, 0, 255))
-                cv.circle(imgColor, (int(px), int(py)), 2, (255, 0, 0), 3)
-
-            print("Npoints:", len(points))
-            print("Threshold:", self.pHold.threshold)
-            return img, associatedPoints
+        print("Npoints:", len(points))
+        print("Threshold:", self.pHold.threshold)
+        return img, associatedPoints
 
 if __name__ == '__main__':
     nFeatures = 4
