@@ -1,5 +1,5 @@
 import numpy as np
-
+from scipy.spatial.transform import Rotation as R
 from coordinate_system import CoordinateSystem, CoordinateSystemArtist
 
 def polygon(rad, n, shift=False, zShift=0):
@@ -13,7 +13,7 @@ def polygon(rad, n, shift=False, zShift=0):
     return points
 
 class FeatureModel(CoordinateSystem):
-    def __init__(self, rads, ns, shifts, zShifts, *args, **kwargs):
+    def __init__(self, rads, ns, shifts, zShifts, euler=(0, 0, 0), *args, **kwargs):
         CoordinateSystem.__init__(self, *args, **kwargs)
         
         assert len(rads) == len(ns) == len(shifts) == len(zShifts)
@@ -24,6 +24,8 @@ class FeatureModel(CoordinateSystem):
             else:
                 self.features = np.append(self.features, polygon(r, n, s, z), axis=0)
 
+        rotMat = R.from_euler("XYZ", euler).as_dcm()
+        self.features = np.matmul(rotMat, self.features[:, :3].transpose()).transpose()
         self.features = self.features[:, :3].copy() # Don't need homogenious
 
 class _FeatureModel(CoordinateSystem):

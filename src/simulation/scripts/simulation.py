@@ -39,9 +39,6 @@ class Simulator:
         cameraMatrix = np.array([[812.2540283203125,   0,    		        px],
                                 [   0,               814.7816162109375, 	py], 
                                 [   0,     		     0,   		       	    1]], dtype=np.float32)
-        
-        cameraMatrix[0, :] *= pixelWidth
-        cameraMatrix[1, :] *= pixelHeight
 
         self.camera = Camera(cameraMatrix, 
                              resolution=(480, 640), 
@@ -223,7 +220,7 @@ class Simulator:
 
         if img is not None:
             cv.imshow("Captured image", img)
-            cv.waitKey(1)
+            #cv.waitKey(1)
 
         center = (0, 0, 0)
         if self.centerAxis:
@@ -282,8 +279,8 @@ class DockerDummy:
         l = np.linalg.norm(trans)
         rotRefLength = 5
         featToAUV = np.array(sim.auv.translation).transpose()-np.array(sim.feature.translation).transpose()
-        projAUVOnFeatureLine = np.dot(featToAUV.transpose(), np.array(sim.feature.rotation)[:, 2])
-        xDir = (projAUVOnFeatureLine+rotRefLength)*np.array(sim.feature.rotation)[:, 2] + np.array(sim.feature.translation).transpose() - np.array(sim.auv.translation).transpose()
+        projAUVOnFeatureLine = np.dot(featToAUV.transpose(), -np.array(sim.feature.rotation)[:, 2])
+        xDir = -(projAUVOnFeatureLine+rotRefLength)*np.array(sim.feature.rotation)[:, 2] + np.array(sim.feature.translation).transpose() - np.array(sim.auv.translation).transpose()
         xDir = xDir/np.linalg.norm(xDir)
         xDir = xDir.transpose()
         zDir = np.array([0, 0, 1])
@@ -313,16 +310,17 @@ if __name__ == "__main__":
     import sys
     sys.path.append("../../docking/scripts")
     from docking import Docker#, DockerArtist
+    from camera import usbCamera
 
     sys.path.append("../../perception/scripts")
     from feature_extraction import ThresholdFeatureExtractor
     from pose_estimation import DSPoseEstimator
     
 
-    featureModel = FeatureModel(0.3, 4, shift=True, centerPointDist=0.3, zShift=0)
-    featureExtractor = ThresholdFeatureExtractor(len(featureModel.features))
+    featureModel = FeatureModel([0.3], [4], [True], [0])
+    featureExtractor = ThresholdFeatureExtractor(featureModel, usbCamera)
 
-    docker = Docker()
+    #docker = Docker()
     docker = DockerDummy()
 
     sim = Simulator(docker.requestRendezvous, 

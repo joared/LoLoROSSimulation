@@ -25,7 +25,7 @@ class AUV(CoordinateSystem):
             relativeCameraRotation = R.from_euler("XYZ", (-np.pi/2, -np.pi/2, 0)).as_dcm()
         elif placement == "front":
             relativeCameraTranslation = np.array([self.l/2, 0, 0])
-            relativeCameraRotation = R.from_euler("XYZ", (-np.pi/2, np.pi/2, 0)).as_dcm()
+            relativeCameraRotation = R.from_euler("XYZ", (-np.pi/2, -np.pi/2, 0)).as_dcm()
             #relativeCameraRotation = np.eye(3)
         else:
             raise Exception("Invalid placement '{}'".format(placement))

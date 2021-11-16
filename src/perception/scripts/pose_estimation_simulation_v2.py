@@ -1,3 +1,4 @@
+#!/usr/bin/env python
 import cv2 as cv
 import numpy as np
 import time
@@ -5,145 +6,224 @@ from matplotlib import pyplot as plt
 from mpl_toolkits import mplot3d
 from scipy.spatial.transform import Rotation as R, rotation
 from scipy.spatial.transform import Slerp
-from tf.transformations import quaternion_multiply
+from tf.transformations import quaternion_from_matrix
+
+from geometry_msgs.msg import PoseWithCovarianceStamped, PoseArray, Pose, Quaternion, TransformStamped
+import tf
+import tf.msg
+import rospy
+from cv_bridge import CvBridge, CvBridgeError
+from sensor_msgs.msg import Image
 
 import sys
-sys.path.append("../../simulation/scripts")
+import os
+dirPath = os.path.dirname(os.path.realpath(__file__))
+sys.path.append(os.path.join(dirPath, "../../simulation/scripts"))
+for p in sys.path:
+    print(p)
 from coordinate_system import CoordinateSystem, CoordinateSystemArtist
 from feature import polygon, FeatureModel
+from camera import usbCamera
 from pose_estimation import DSPoseEstimator
-from pose_estimation_utils import plotPoints, plotAxis, projectPoints2
+from pose_estimation_utils import plotPoints, plotAxis, projectPoints
 
-def projectPoints(points3D, cameraMatrix):
-    # 3D points projected and converted to image coordinates (x,y in top left corner)
-    points2D = np.matmul(cameraMatrix, points3D.transpose())
-    points2D = points2D.transpose()
-    points2D[:, 0] /= points2D[:, 2]
-    points2D[:, 1] /= points2D[:, 2]
-    points2D[:, 2] /= points2D[:, 2]
-    #for p in points2D:
-    #    p[0] /= p[2]
-    #    p[1] /= p[2]
-    #    p[2] /= p[2]
-    return points2D[:, :2]
+def vectorToPose(frameID, translationVector, rotationVector, covariance):
+    rotMat = R.from_rotvec(rotationVector).as_dcm()
 
-def displayRotation(img, objectPpoints, euler, translation, camera_matrix, dist_coeffs):
-    r = R.from_euler("XYZ", euler)
-    rotation = r.as_rotvec().transpose()
-    nIter = 100
-    
-    for i in range(nIter):
-        imgTemp = img.copy()
-        plotAxis(imgTemp, i*rotation/nIter, translation, camera_matrix, dist_coeffs)
+    # convert so that the pose is pointing in the z direction (as the light frame is defined)
+    #lightRotation = R.from_euler("XYZ", (-np.pi/2, np.pi/2, 0)).as_dcm().transpose()
+    #rotMat = np.matmul(rotMat, lightRotation)
 
-        # Transform and project estimated measured points
-        r = R.from_rotvec((i*rotation/nIter).transpose())
-        T = np.hstack((r.as_dcm(), np.array([[0], [0], [800]])))
-        points3D = np.matmul(T, objectPpoints.transpose()).transpose()
-        points2D = projectPoints(points3D, camera_matrix)
+    rotMatHom = np.hstack((rotMat, np.zeros((3, 1))))
+    rotMatHom = np.vstack((rotMatHom, np.array([0, 0, 0, 1])))
+    q = quaternion_from_matrix(rotMatHom)
+    p = PoseWithCovarianceStamped()
+    p.header.frame_id = frameID
+    p.header.stamp = rospy.Time.now()
+    (p.pose.pose.position.x, 
+     p.pose.pose.position.y, 
+     p.pose.pose.position.z) = (translationVector[0], 
+                           translationVector[1], 
+                           translationVector[2])
+    p.pose.pose.orientation = Quaternion(*q)
+    p.pose.covariance = list(np.ravel(covariance))
 
-        plotPose(imgTemp, i*rotation/nIter, translation, camera_matrix, dist_coeffs, points2D, (255, 0, 0))
-        cv.imshow("Image", imgTemp)
-        cv.waitKey(10)
+    return p
 
-def pointsFromTranslEuler(translVec, eulerOrder, euler, featurePoints):
-    r = R.from_euler(eulerOrder, euler)
-    featureT = np.hstack((r.as_dcm(), translVec.reshape((3,1))))
-    trueRotation = r.as_rotvec().transpose()
-    print(trueRotation)
-    # True 3D points in camera frame
-    nFeatures = len(featureModel.features)
-    featurePointsHomogenious = np.hstack((featurePoints, np.ones((nFeatures, 1))))
-    points3D = np.matmul(featureT, featurePointsHomogenious.transpose()).transpose()
-    return points3D
+def publishFeaturePoses(frameID, featurePoints, poseCovariance):
+    timeStamp = rospy.Time.now()
+    for i, point in enumerate(featurePoints):
+        frameID = "{}/{}".format(frameID, i+1)
+        covariance = np.zeros([0]*36) # TODO: use poseCovariance
+        p = vectorToPose(frameID, point, np.zeros((1, 3)), covariance)
 
-def test2DNoiseError(camera, featureModel, sigmaX, sigmaY):
-    """
-    camera - Camera object
-    featureModel - FeatureModel object
-    pixelUncertainty - 2x2 matrix [[sigmaX, 0], [0, sigmaY]] where sigmaX and sigmaY are pixel std in x and y respectively
-    """
-    img = cv.imread('../image_dataset/lights_in_scene.png')
-    img = np.zeros(camera.resolution)
-    img = np.stack((img,)*3, axis=-1)
+def vectorToTransform(frameID, childFrameID, translationVector, rotationVector):
+    global posePublisher, transformPublisher
 
-    poseEstimator = DSPoseEstimator(camera)
-    featurePoints = featureModel.features
+    t = TransformStamped()
+    t.header.stamp = rospy.Time.now()
+    t.header.frame_id = frameID
+    t.child_frame_id = childFrameID
+    t.transform.translation.x = translationVector[0]
+    t.transform.translation.y = translationVector[1]
+    t.transform.translation.z = translationVector[2]
 
-    # True translation and rotation of the feature points wrt to camera
-    trueTrans = np.array([0, 0, 0.2], dtype=np.float32)
-    r = R.from_euler("XYZ", (0., np.pi/4, 0.))
-    trueRotation = r.as_rotvec().transpose()
-    projPoints = projectPoints2(trueTrans, trueRotation, camera, featurePoints)
-    
-    nFeatures = len(featureModel.features)
-    featurePointsHomogenious = np.hstack((featurePoints, np.ones((nFeatures, 1))))
-    # should the rotation be transposed? No i don't think so
-    featureT = np.hstack((r.as_dcm(), trueTrans.reshape((3,1))))
-    points3D = np.matmul(featureT, featurePointsHomogenious.transpose()).transpose()
+    rotMat = R.from_rotvec(rotationVector).as_dcm()
+    rotMatHom = np.hstack((rotMat, np.zeros((3, 1))))
+    rotMatHom = np.vstack((rotMatHom, np.array([0, 0, 0, 1])))
+    q = quaternion_from_matrix(rotMatHom)
+    t.transform.rotation = Quaternion(*q)
+    return t
 
+class PoseSimulation:
+    def __init__(self):
+        self.transformPublisher = rospy.Publisher("/tf", tf.msg.tfMessage, queue_size=1)
+        self.cvBridge = CvBridge()
+        self.imagePublisher = rospy.Publisher("pose/image", Image, queue_size=1)
 
-    """
-    # seems to be nothing wrong with this way of projecting the points
-    # True 3D points in camera frame
-    nFeatures = len(featureModel.features)
-    featurePointsHomogenious = np.hstack((featurePoints, np.ones((nFeatures, 1))))
-    featureT = np.hstack((r.as_dcm(), trueTrans.reshape((3,1))))
-    points3D = np.matmul(featureT, featurePointsHomogenious.transpose()).transpose()
-    print(points3D)
-    # True 2D projected points, 
-    projPoints2 = projectPoints(points3D, camera.cameraMatrix)
-    print(projPoints2)
-    """
+        self.posePublisher = rospy.Publisher('light_true/pose', PoseWithCovarianceStamped, queue_size=1)
+        self.featurePosesPublisher = rospy.Publisher('light_true/poses', PoseArray, queue_size=1)
+        self.poseNoisedPublisher = rospy.Publisher('light_noised/pose', PoseWithCovarianceStamped, queue_size=1)
+        self.featurePosesNoisedPublisher = rospy.Publisher('light_noised/poses', PoseArray, queue_size=1)
 
-    nIterations = 500
-    for i in range(nIterations):
-        # Introduce noise:
-        # We systematically displace each feature point 2 standard deviations from its true value
-        # 2 stds (defined by pixelUncertainty) to the left, top, right, and bottom
-        print(sigmaX)
-        noise2D = np.random.normal(0, sigmaX, projPoints.shape)
-        projPointsNoised = projPoints + noise2D
+    def _getKey(self):
+        pass
 
-        # estimate pose (translation and rotation in camera frame)
-        estTranslationVec = trueTrans.copy()
-        estRotationVec = trueRotation.copy()
-        translationVector, rotationVector = poseEstimator.update(featurePoints, 
-                                                                 projPointsNoised, 
-                                                                 np.array([[sigmaX, 0], 
-                                                                           [0, sigmaY]]),
-                                                                 10000,
-                                                                 estTranslationVec,
-                                                                 estRotationVec)
-
-        """# Transform and project estimated measured points
-        r = R.from_rotvec(rotation_vector.transpose())
-        T = np.hstack((r.as_dcm()[0], translation_vector))
-        pointsSolved3D = np.matmul(T, points_3D.transpose()).transpose()
-        pointsSolved2D = projectPoints(pointsSolved3D, camera_matrix)
+    def test2DNoiseError(self, camera, featureModel, sigmaX, sigmaY):
         """
-   
-        imgTemp = img.copy()
-        #plotPose(img.copy(), rotation_vector, translation_vector, camera_matrix, dist_coeffs, temp3D, points_2D, transformedProj)
-        print("Trans", translationVector)
-        print("True trans", trueTrans)
-        print("Rot", rotationVector)
-        print("True rot", trueRotation)
-        # ground truth
-        plotPoints(imgTemp, trueTrans, trueRotation, camera, featurePoints, color=(0,255,0))
-        #plotAxis(imgTemp, rotation, translation, camera_matrix, dist_coeffs)
+        camera - Camera object
+        featureModel - FeatureModel object
+        pixelUncertainty - 2x2 matrix [[sigmaX, 0], [0, sigmaY]] where sigmaX and sigmaY are pixel std in x and y respectively
+        """
+        #img = cv.imread('../image_dataset/lights_in_scene.png')
+        img = np.zeros(camera.resolution, dtype=np.int8)
+        img = np.stack((img,)*3, axis=-1)
+        cv.imshow("img", img)
 
-        # estimated measure points_2D and points_2D_noised should be used?: no because thats just what the PnP algotihm based the pose estimation on
-        plotPoints(imgTemp, translationVector, rotationVector, camera, featurePoints, color=(0,0,255))
-        #plotAxis(imgTemp, rotation_vector, translation_vector, camera_matrix, dist_coeffs)
-        #(imgTemp, rotationVector, translationVector, camera.cameraMatrix, camera.distCoeffs, pointsSolved2D, color=(0,0,255))
+        poseEstimator = DSPoseEstimator(camera, ignorePitch=False, ignoreRoll=False)
+        featurePoints = featureModel.features
 
-        cv.imshow("Image", imgTemp)
-        cv.waitKey(0)
+        trueTrans = np.array([0, 0, 1], dtype=np.float32)
+        trueRotation = np.eye(3, dtype=np.float32)
+        ax, ay, az = 0, 0, 0 # euler angles
+        featureIdx = -1
+        rate = rospy.Rate(20)
+        while not rospy.is_shutdown():
+            
+            linInc = 0.1
+            angInc = 0.1
+            key = cv.waitKey(1)
+            if key == ord('w'):
+                trueTrans[2] += linInc
+            elif key == ord("s"):
+                trueTrans[2] -= linInc
+            elif key == ord("d"):
+                trueTrans[0] += linInc
+            elif key == ord("a"):
+                trueTrans[0] -= linInc
+            elif key == ord("i"):
+                ax -= angInc
+            elif key == ord("k"):
+                ax += angInc
+            elif key == ord("l"):
+                ay += angInc
+            elif key == ord("j"):
+                ay -= angInc
+            elif key == ord("n"):
+                rotMat = R.from_euler("XYZ", (0, 0, -angInc)).as_dcm()
+                if featureIdx == -1:
+                    featurePoints = np.matmul(rotMat, featurePoints.transpose()).transpose()
+                else:
+                    featurePoints[featureIdx, :] = np.matmul(rotMat, featurePoints[featureIdx, :].transpose()).transpose()
+            elif key == ord("m"):
+                rotMat = R.from_euler("XYZ", (0, 0, angInc)).as_dcm()
+                if featureIdx == -1:
+                    featurePoints = np.matmul(rotMat, featurePoints.transpose()).transpose()
+                else:
+                    featurePoints[featureIdx, :] = np.matmul(rotMat, featurePoints[featureIdx, :].transpose()).transpose()
+            elif key in [ord(str(i)) for i in range(len(featureModel.features))]:
+                featureIdx = int(chr(key))
+            else:
+                if key != -1:
+                    featureIdx = -1
+                    print(chr(key))
+
+            r = R.from_euler("YXZ", (ay, ax, 0))
+            trueRotation = r.as_rotvec().transpose()
+            projPoints = projectPoints(trueTrans, trueRotation, camera, featurePoints)
+
+            # Introduce noise:
+            # We systematically displace each feature point 2 standard deviations from its true value
+            # 2 stds (defined by pixelUncertainty) to the left, top, right, and bottom
+            #noise2D = np.random.normal(0, sigmaX, projPoints.shape)
+            projPointsNoised = np.zeros(projPoints.shape)
+            projPointsNoised[:, 0] = projPoints[:, 0] + np.random.normal(0, sigmaX, projPoints[:, 0].shape)
+            projPointsNoised[:, 1] = projPoints[:, 1] + np.random.normal(0, sigmaY, projPoints[:, 1].shape)
+
+            # estimate pose (translation and rotation in camera frame)
+            estTranslationVec = trueTrans.copy()
+            estRotationVec = trueRotation.copy()
+            translationVector, rotationVector, covariance = poseEstimator.update(featurePoints, 
+                                                                                projPointsNoised, 
+                                                                                np.array([[4*sigmaX*sigmaX, 0.], # we set covariance as (2*std)^2 for 95% coverage
+                                                                                        [0., 4*sigmaY*sigmaY]]),
+                                                                                10000,
+                                                                                estTranslationVec,
+                                                                                estRotationVec)
+
+            _, _, covarianceUnNoised = poseEstimator.update(featurePoints, 
+                                                            projPoints, 
+                                                            np.array([[4*sigmaX*sigmaX, 0.],
+                                                                    [0., 4*sigmaY*sigmaY]]),
+                                                            10000,
+                                                            estTranslationVec,
+                                                            estRotationVec)
+
+            pArray = PoseArray()
+            #pArrayNoised = PoseArray()
+            pArray.header.frame_id = "lights_noised"
+            pArray.header.stamp = rospy.Time.now()
+            for p in featurePoints:
+                pose = Pose()
+                pose.position.x = p[0]
+                pose.position.y = p[1]
+                pose.position.z = p[2]
+                pose.orientation.w = 1
+                pArray.poses.append(pose)
+                #covariance = np.zeros([0]*36) # TODO: use poseCovariance
+                #p = vectorToPose(frameID, point, np.zeros((1, 3)), covariance)
+
+            self.featurePosesPublisher.publish(pArray)
+            pArray.header.frame_id = "lights_true"
+            self.featurePosesNoisedPublisher.publish(pArray)
+
+            tTrue = vectorToTransform("camera1", "lights_true", trueTrans, trueRotation)
+            tNoised = vectorToTransform("camera2", "lights_noised", translationVector, rotationVector)
+            self.transformPublisher.publish(tf.msg.tfMessage([tTrue, tNoised]))
+
+            self.posePublisher.publish( vectorToPose("camera1", trueTrans, trueRotation, covarianceUnNoised) )
+            self.poseNoisedPublisher.publish( vectorToPose("camera2", translationVector, rotationVector, covariance) )
+
+            imgTemp = img.copy()
+            # true pose
+            plotPoints(imgTemp, trueTrans, trueRotation, camera, featurePoints, color=(0,255,0))
+            #plotAxis(imgTemp, rotation, translation, camera_matrix, dist_coeffs)
+
+            # estimated pose
+            plotPoints(imgTemp, translationVector, rotationVector, camera, featurePoints, color=(0,0,255))
+            plotAxis(imgTemp, translationVector, rotationVector, camera, featurePoints, scale=0.043)
+
+            self.imagePublisher.publish(self.cvBridge.cv2_to_imgmsg(imgTemp))
+
+            rate.sleep()
 
 if __name__ =="__main__":
-    from camera import usbCamera
+    
+    rospy.init_node('pose_estimation_simulation')
+
     camera = usbCamera
-    featureModel = FeatureModel([0, 0.06], [1, 4], [False, True], [0.043, 0])
-    test2DNoiseError(camera, featureModel, camera.pixelWidth*2, camera.pixelHeight*2)
-    #pose2()
+    #featureModel = FeatureModel([0, 0.06], [1, 4], [False, True], [0.043, 0])
+    #featureModel = FeatureModel([0.06], [4], [True], [0])#, euler=(0, np.pi, 0))
+    featureModel = FeatureModel([0, 0.3], [1, 4], [False, True], [0.3, 0])
+    #featureModel = FeatureModel([0.3], [4], [True], [0])
+    PoseSimulation().test2DNoiseError(camera, featureModel, sigmaX=1*camera.pixelWidth, sigmaY=1*camera.pixelHeight)

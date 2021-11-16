@@ -36,6 +36,8 @@ def main():
     global image_msg
 
     featureModel = FeatureModel([0, 0.06], [1, 4], [False, True], [0.043, 0])
+    #featureModel = FeatureModel([0.06], [4], [True], [0])
+    #featureModel.features = np.array([[-0.33, -0.225, 0], [0.33, -0.225, 0], [0.33, 0.225, 0], [-0.33, 0.225, 0]])
     points3D = featureModel.features
 
     # points expressed as if the relative orientation between camera and featureModel is the identity matrix
@@ -93,13 +95,13 @@ def main():
                 res, associatedPoints = featureExtractor(gray, imgColor, estTranslationVec, estRotationVec)
 
                 if len(associatedPoints) == nFeatures:
-                    translationVector, rotationVector = poseEstimator.update(points3D, 
-                                                                             associatedPoints, 
-                                                                             np.array([[camera.pixelWidth*2, 0], 
-                                                                                       [0, camera.pixelHeight*2]]),
-                                                                             elapsed,
-                                                                             estTranslationVec,
-                                                                             estRotationVec)
+                    translationVector, rotationVector, covariance = poseEstimator.update(points3D, 
+                                                                                         associatedPoints, 
+                                                                                         np.array([[camera.pixelWidth*2, 0], 
+                                                                                                   [0, camera.pixelHeight*2]]),
+                                                                                         elapsed,
+                                                                                         estTranslationVec,
+                                                                                         estRotationVec)
 
                     startTime = time.time()
                     # show lights pose wrt to camera
@@ -121,7 +123,8 @@ def main():
                     print("Range:", np.linalg.norm(translation))
                     cs.setTransform(translation, rotation)
 
-                    plotAxis(poseImg, translationVector, rotationVector, camera, points3D)
+                    plotAxis(poseImg, translationVector, rotationVector, camera, points3D, 0.043)
+                    plotPoints(poseImg, translationVector, rotationVector, camera, points3D, color=(0, 0, 255))
                     for p in associatedPoints:
                         x = int( p[0] / camera.pixelWidth )
                         y = int( p[1] / camera.pixelHeight )
@@ -148,7 +151,7 @@ def main():
             #csRefArt.update()
             #axes2.plot(hist)
             #cv.imshow("boundingbox", res)
-            #cv.imshow("original", unTouched)
+            cv.imshow("original", unTouched)
             #cv.imshow("bin", featureExtractor.pHold.img)
             #cv.imshow("opened image", featureExtractor.adaOpen.img)
             #cv.imshow("image processing", imgColor)

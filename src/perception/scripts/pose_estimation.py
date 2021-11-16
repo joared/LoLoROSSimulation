@@ -100,24 +100,33 @@ class DSPoseEstimator:
         """
 
         #if self.flag == cv.SOLVEPNP_EPNP:
-        #    points_2D = associatedPoints.reshape((associatedPoints.shape[0], 1, associatedPoints.shape[1]))
+        #    associatedPoints = associatedPoints.reshape((len(associatedPoints), 1, 2))
 
+        featurePoints = np.array(list(featurePoints[:, :3]))
         if estTranslationVec is not None:
             guessTrans = estTranslationVec.copy().reshape((3, 1))
             guessRot = estRotationVec.copy().reshape((3, 1))
+            # On axis-angle: https://en.wikipedia.org/wiki/Axis%E2%80%93angle_representation#Relationship_to_other_representations
+            success, rotationVector, translationVector = cv.solvePnP(featurePoints,
+                                                                    associatedPoints,
+                                                                    self.camera.cameraMatrix,
+                                                                    self.camera.distCoeffs,
+                                                                    useExtrinsicGuess=True,
+                                                                    tvec=guessTrans,
+                                                                    rvec=guessRot,
+                                                                    flags=cv.SOLVEPNP_ITERATIVE)
         else:
             guessTrans = np.array([[0.], [0.], [1.]])
             guessRot = np.array([[0.], [np.pi], [0.]])
-
-        featurePoints = np.array(list(featurePoints[:, :3]))
-        success, rotationVector, translationVector = cv.solvePnP(featurePoints,
-                                                                 associatedPoints,
-                                                                 self.camera.cameraMatrix,
-                                                                 self.camera.distCoeffs,
-                                                                 useExtrinsicGuess=True,
-                                                                 tvec=guessTrans,
-                                                                 rvec=guessRot,
-                                                                 flags=cv.SOLVEPNP_ITERATIVE)
+            # On axis-angle: https://en.wikipedia.org/wiki/Axis%E2%80%93angle_representation#Relationship_to_other_representations
+            success, rotationVector, translationVector = cv.solvePnP(featurePoints,
+                                                                    associatedPoints,
+                                                                    self.camera.cameraMatrix,
+                                                                    self.camera.distCoeffs,
+                                                                    useExtrinsicGuess=True,
+                                                                    tvec=guessTrans,
+                                                                    rvec=guessRot,
+                                                                    flags=cv.SOLVEPNP_ITERATIVE)
                                                                  
         projectedPoints, jacobian = cv.projectPoints(featurePoints, 
                                                      rotationVector, 
@@ -129,18 +138,22 @@ class DSPoseEstimator:
         # About covariance: https://manialabs.wordpress.com/2012/08/06/covariance-matrices-with-a-practical-example/
         # Article: https://www.sciencedirect.com/science/article/pii/S0029801818301367
         # Stack overflow: https://stackoverflow.com/questions/36618269/uncertainty-on-pose-estimate-when-minimizing-measurement-errors
-        #jacobian - 10 * 14
-        # jacobian - [translation, rotation, focal lengths, principal point, dist coeffs]
-        J = jacobian[:, :6]
-        pointCovariance[0][0] *= self.camera.pixelWidth
-        pointCovariance[1][1] *= self.camera.pixelHeight
+        #jacobian - 2*nPoints * 14
+        # jacobian - [rotation, translation, focal lengths, principal point, dist coeffs]
+        #jacobian *= 0.1
+        rotJ = jacobian[:, :3]
+        transJ = jacobian[:, 3:6]
+        J = np.hstack((transJ, rotJ)) # reorder covariance as used in PoseWithCovarianceStamped
+
+        # How to rotate covariance: https://robotics.stackexchange.com/questions/2556/how-to-rotate-covariance
+
         sigma = scipy.linalg.block_diag(*[pointCovariance]*len(featurePoints))
         sigmaInv = np.linalg.inv(sigma)
-        #print("SIGMA", sigma.shape)
         try:
             poseCov = np.linalg.inv(np.matmul(np.matmul(J.transpose(), sigmaInv), J))
         except np.linalg.LinAlgError as e:
             print("Singular matrix")
+            poseCov = None
         #print(poseCov)
         #poseCov = np.matmul(jacobian.transpose(), np.linalg.inv(pointCovariance))
         #poseCov = np.matmul(poseCov, jacobian)
@@ -170,7 +183,7 @@ class DSPoseEstimator:
         #    self.dsRotation = R.from_euler("YZX", (ay, 0, ax)).as_dcm()
          # remove roll info
 
-        return self.dsTranslation, R.from_dcm(self.dsRotation).as_rotvec()
+        return self.dsTranslation, R.from_dcm(self.dsRotation).as_rotvec(), poseCov
 
 
 if __name__ =="__main__":

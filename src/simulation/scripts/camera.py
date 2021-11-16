@@ -258,8 +258,8 @@ class CameraImageCaptureArtist:
         return img
 
 camHz = 1 # camera update rate
-pixelWidth = 0.0000028
-pixelHeight = 0.0000028
+pixelWidth = 2.8e-6
+pixelHeight = 2.8e-6
 cameraMatrix = np.array([[812.2540283203125,   0,    		    329.864062734141 ],
                         [   0,               814.7816162109375, 239.0201541966089], 
                         [   0,     		       0,   		      1             ]], dtype=np.float32)

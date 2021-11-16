@@ -1,16 +1,10 @@
 import cv2 as cv
 import numpy as np
 
-def plotAxis(img, translationVector, rotationVector, camera, points):
+def plotAxis(img, translationVector, rotationVector, camera, points, scale):
     points = points[:, :3].copy()
     #print(points)
-    rad = 0.043
-    projPoints, jacobian = cv.projectPoints(points, 
-                                            rotationVector, 
-                                            translationVector, 
-                                            camera.cameraMatrix, 
-                                            camera.distCoeffs)
-    projPoints = np.array([p[0] for p in projPoints])
+    rad = scale
 
     zDir, jacobian = cv.projectPoints(np.array([(0.0, 0.0, rad)]), 
                                       rotationVector, 
@@ -44,13 +38,6 @@ def plotAxis(img, translationVector, rotationVector, camera, points):
         point2 = (int(round(d[0][0][0] / camera.pixelWidth)), int(round(d[0][0][1] / camera.pixelHeight)))
         cv.line(img, point1, point2, c, 5)
 
-    for p in projPoints:
-        # to pixel coordinates
-        x = int( p[0] / camera.pixelWidth )
-        y = int( p[1] / camera.pixelHeight )
-        radius = 2
-        cv.circle(img, (x,y), radius, (0, 0, 255), 3)
-
 def plotPoints(img, translationVector, rotationVector, camera, points, color):
     projPoints, jacobian = cv.projectPoints(points, 
                                         rotationVector, 
@@ -66,7 +53,7 @@ def plotPoints(img, translationVector, rotationVector, camera, points, color):
         radius = 3
         cv.circle(img, (x,y), radius, color, 3)
 
-def projectPoints2(translationVector, rotationVector, camera, points):
+def projectPoints(translationVector, rotationVector, camera, points):
     projPoints, jacobian = cv.projectPoints(points, 
                                         rotationVector, 
                                         translationVector, 

@@ -461,11 +461,6 @@ class ThresholdFeatureExtractor:
 
     def __call__(self, gray, imgColor, estTranslationVec=None, estRotationVec=None):
         img = gray.copy()
-        
-        # we need to rotate the points if we want the relative orientation to be different, 
-        # otherwise feature association will fail
-        points3DAss = np.matmul( R.from_euler("XYZ", (0, np.pi, 0)).as_dcm(), self.featureModel.features[:, :3].transpose()).transpose()    
-        points3DAss = np.append(points3DAss, np.ones((points3DAss.shape[0], 1)), axis=1)
 
         featurePointsGuess = None
         if estTranslationVec is not None:
@@ -542,6 +537,13 @@ class ThresholdFeatureExtractor:
         points[:,0] *= self.camera.pixelWidth
         points[:,1] *= self.camera.pixelHeight
 
+
+        # we need to rotate the points if we want the relative orientation to be different, 
+        # otherwise feature association will fail
+        points3DAss = self.featureModel.features[:, :3].transpose()
+        points3DAss = np.matmul( R.from_euler("XYZ", (0, np.pi, 0)).as_dcm(), points3DAss).transpose()    
+        points3DAss = np.append(points3DAss, np.ones((points3DAss.shape[0], 1)), axis=1)
+        
         associatedPoints, featurePointsGuess = featureAssociation(points3DAss, points, featurePointsGuess)
 
         for i in range(len(associatedPoints)):

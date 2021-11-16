@@ -174,7 +174,7 @@ def pose2():
     
     #points_3D = np.append(points_3D, polygon(rad=20, n=3, shift=True, zShift=-100), axis=0)
     #points_3D = np.append(points_3D, [[0, 0, 0, 1.]], axis=0)
-    #points_3D = np.append(points_3D, [[0, 0, 20, 1.]], axis=0)
+    points_3D = np.append(points_3D, [[0, 0, 70.7, 1.]], axis=0)
     #points_3D = np.append(points_3D, [[0,-30,-200,1]], axis=0)
     #points_3D = np.append(points_3D, [[-30,30,-200,1]], axis=0)
     #points_3D = np.append(points_3D, [[30,30,-200,1]], axis=0)
