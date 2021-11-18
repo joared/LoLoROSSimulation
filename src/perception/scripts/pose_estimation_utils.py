@@ -38,16 +38,12 @@ def plotAxis(img, translationVector, rotationVector, camera, points, scale):
         point2 = (int(round(d[0][0][0] / camera.pixelWidth)), int(round(d[0][0][1] / camera.pixelHeight)))
         cv.line(img, point1, point2, c, 5)
 
-def plotPoints(img, translationVector, rotationVector, camera, points, color):
-    projPoints, jacobian = cv.projectPoints(points, 
-                                        rotationVector, 
-                                        translationVector, 
-                                        camera.cameraMatrix, 
-                                        camera.distCoeffs)
-    projPoints = np.array([p[0] for p in projPoints])
+def plotPosePoints(img, translationVector, rotationVector, camera, points, color):
+    projPoints = projectPoints(translationVector, rotationVector, camera, points)
+    plotPoints(img, camera, projPoints, color)
 
-    # to pixel coordinates
-    for p in projPoints:
+def plotPoints(img, camera, points, color):
+    for p in points:
         x = int( p[0] / camera.pixelWidth )
         y = int( p[1] / camera.pixelHeight )
         radius = 3

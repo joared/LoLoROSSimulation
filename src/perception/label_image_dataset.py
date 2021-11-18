@@ -17,15 +17,15 @@ def drawErrorCircle(img, errCircle, i, color, font=cv.FONT_HERSHEY_SIMPLEX, font
 
 class ImageLabeler:
     # https://www.pyimagesearch.com/2015/03/09/capturing-mouse-click-events-with-python-and-opencv/
-    def __init__(self, imgPath, errCircles=None):
-        self.imgName = os.path.basename(imgPath)
-        self.img = cv.imread(imgPath)
-        self.errCircles = errCircles if errCircles else []
+    def __init__(self):
         self.currentPoint = None
         self.currentRadius = 10
         self.changeErrCircleIdx = None
-        self.currentImg = self.img
+        self.currentImg = None
         self.i = 0
+
+        self.img = None
+        self.errCircles = None
 
     def _drawInfoText(self, img):
         dy = 15
@@ -107,13 +107,17 @@ class ImageLabeler:
             pass
         
 
-    def label(self):
-        cv.namedWindow(self.imgName)
-        cv.setMouseCallback(self.imgName, self.click)
+    def label(self, imgPath, errCircles=None):
+        imgName = os.path.basename(imgPath)
+        self.img = cv.imread(imgPath)
+        self.errCircles = errCircles if errCircles else []
+
+        cv.namedWindow(imgName)
+        cv.setMouseCallback(imgName, self.click)
         while True:
             self.draw()
             # display the image and wait for a keypress
-            cv.imshow(self.imgName, self.currentImg)
+            cv.imshow(imgName, self.currentImg)
             key = cv.waitKey(1) & 0xFF
 
             if key == ord("+"): # arrow up
@@ -145,6 +149,8 @@ class ImageLabeler:
         cv.destroyAllWindows()
         return self.errCircles
 
+    def labelVideo(self, videoPath):
+        pass
 
 def getImagePaths(path):
     # https://stackoverflow.com/questions/3207219/how-do-i-list-all-files-of-a-directory
@@ -183,7 +189,7 @@ def labelVideo(filePath, featExtClass):
     cap = cv.VideoCapture(filePath)
     if (cap.isOpened()== False):
         print("Error opening video stream or file")
-    featExt = featExtClass(1, p=0.1, erosionKernelSize=9, maxIter=10)
+    featExt = featExtClass(featureModel=5, camera=None, p=0.1, erosionKernelSize=9, maxIter=10)
     
     fourcc = cv.VideoWriter_fourcc(*'MP4V')
     #out = cv.VideoWriter('output.mp4',fourcc, 30.0, (1920,1080))
@@ -198,21 +204,23 @@ def labelVideo(filePath, featExtClass):
         if ret == True:
             gray = cv.cvtColor(frame, cv.COLOR_BGR2GRAY)
             timeWait = 1
-            if 250 < i < 850 or 1300 < i < 1400 or 2200 < i < 2550: # FILE0151
-                start = time.time()
-                N += 1
+            #if 250 < i < 850 or 1300 < i < 1400 or 2200 < i < 2550: # FILE0151
             #if 200 < i < 820: # FILE0147
             #if 70 < i < 500: # FILE0148
             #if False:
             #if 90 < i < 530: # FILE0149
+            if 1700 < i < 2000: # FILE0169
+                start = time.time()
+                N += 1
                 _, points = featExt(gray, frame)
                 elapsed = time.time() - start
                 frameRate = 1/elapsed
                 avgFrameRate = ((N-1)*avgFrameRate + frameRate)/N
-                if points:
-                    cv.circle(frame, points[0], 10, (255, 0, 0), -1)
+                for p in points:
+                    cv.circle(frame, p, 10, (255, 0, 0), -1)
                     timeWait = 1
                 print(avgFrameRate)
+                timeWait = 0
             #out.write(frame)
                 cv.imshow('Frame',frame)
             if cv.waitKey(timeWait) & 0xFF == ord('q'):
@@ -226,21 +234,25 @@ def labelVideo(filePath, featExtClass):
 def labelImages(datasetPath, labelFile):
     imgPaths = getImagePaths(datasetPath)
     labeledImgs = readLabeledImages(datasetPath, labelFile)
-    
+
+    for imgPath in labeledImgs:
+        if imgPath not in imgPaths:
+            print("Labeled image '{}' does not exist in the dataset".format(imgPath))
+
     unLabeledImgPaths = [imgPath for imgPath in imgPaths if imgPath not in labeledImgs]
     if unLabeledImgPaths:
         # First label unlabeled images
+        labeler = ImageLabeler()
         for imgPath in unLabeledImgPaths:
             if imgPath not in labeledImgs:
-                labeler = ImageLabeler(imgPath)
-                labels = labeler.label()
+                labels = labeler.label(imgPath)
                 labeledImgs[imgPath] = labels
 
     else:
         # Then label already labeled images
+        labeler = ImageLabeler()
         for imgPath in imgPaths:
-            labeler = ImageLabeler(imgPath, labeledImgs[imgPath])
-            labels = labeler.label()
+            labels = labeler.label(imgPath, labeledImgs[imgPath])
             labeledImgs[imgPath] = labels
 
     saveLabeledImages(datasetPath, labelFile, labeledImgs)
@@ -261,7 +273,7 @@ def testFeatureExtractor(featExtClass, datasetPath, labelFile):
         labels = labeledImgs[imgPath]
         nFeatures = len(labels)
 
-        featExt = featExtClass(nFeatures, p=0.1, useKernel=False)
+        featExt = featExtClass(nFeatures, camera=None, p=0.1, useKernel=False)
         _, points = featExt(gray, img.copy())
         _, points = featExt(gray, img)
         points = points[:nFeatures]
@@ -309,6 +321,6 @@ if __name__ == "__main__":
     datasetPath = "image_dataset"
     labelFile = "labels.txt"
 
-    labelVideo("LoLo/FILE0151.MP4", ThresholdFeatureExtractor)
-    #labelImages(datasetPath, labelFile)
+    #labelVideo("LoLo/FILE0169.MP4", ThresholdFeatureExtractor)
+    labelImages(datasetPath, labelFile)
     #testFeatureExtractor(ThresholdFeatureExtractor, datasetPath, labelFile)

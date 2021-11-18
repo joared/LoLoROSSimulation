@@ -257,20 +257,36 @@ class CameraImageCaptureArtist:
                     scatterPoint(img, vu, r, 25)
         return img
 
-camHz = 1 # camera update rate
-pixelWidth = 2.8e-6
-pixelHeight = 2.8e-6
-cameraMatrix = np.array([[812.2540283203125,   0,    		    329.864062734141 ],
-                        [   0,               814.7816162109375, 239.0201541966089], 
-                        [   0,     		       0,   		      1             ]], dtype=np.float32)
-
-usbCamera = Camera(cameraMatrix, 
+# this camera matrix is wrong, should use the projection matrix instead since images are already rectified
+# eeeh no?? works a lot better with normal camera matrix, have to check this up.
+usbCamera = Camera(cameraMatrix=np.array([[812.2540283203125,   0,    		    329.864062734141 ],
+                                         [   0,               814.7816162109375, 239.0201541966089], 
+                                         [   0,     		     0,   		       1             ]], dtype=np.float32), 
                    distCoeffs=np.zeros((4,1), dtype=np.float32),
                    resolution=(480, 640), 
-                   pixelWidth=pixelWidth, 
-                   pixelHeight=pixelHeight, 
+                   pixelWidth=2.8e-6, 
+                   pixelHeight=2.8e-6, 
                    hz=15)
 
+contourCamera = Camera(cameraMatrix=np.array([[ 884.36572,    0.     ,  994.04928],
+                                             [    0.     , 1096.93066,  567.01791],
+                                             [    0.     ,    0.     ,    1.     ]], dtype=np.float32), 
+                        distCoeffs=np.zeros((4,1), dtype=np.float32),
+                        resolution=(1080, 1920), 
+                        pixelWidth=1e-6, 
+                        pixelHeight=1e-6, 
+                        hz=15)
+
+"""
+contourCamera = Camera(cameraMatrix=np.array([[1168.47103,    0.     ,  984.20482],
+                                              [   0.     , 1174.02217,  562.58081],
+                                              [   0.     ,    0.     ,    1.     ]], dtype=np.float32), 
+                        distCoeffs=np.zeros((4,1), dtype=np.float32),
+                        resolution=(1080, 1920), 
+                        pixelWidth=1e-8, 
+                        pixelHeight=1e-8, 
+                        hz=15)
+"""
 if __name__ == "__main__":
     pass
     

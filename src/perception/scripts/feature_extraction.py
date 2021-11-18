@@ -12,7 +12,7 @@ class PercentageThreshold:
         self.p = p
         self.thresholdType = thresholdType
         self.threshold = 0 # store the last threshold that was used 
-        self.img = None # store the last processed image
+        self.img = np.zeros((10, 10)) # store the last processed image
 
     def process(self, img):
         r = np.max(img) - np.min(img)
@@ -20,6 +20,30 @@ class PercentageThreshold:
         self.threshold = low
         ret, img = cv.threshold(img, low, 256, self.thresholdType)
         self.img = img
+        return img
+
+class AdaptiveThreshold:
+    def __init__(self, nFeatures, thresStart, thresInc, thresMin, thresholdType=cv.THRESH_BINARY):
+        """
+        try cv.THRESH_OTSU?
+        """
+        self.nFeatures = nFeatures
+        self.threshold = thresStart
+        self.thresInc = thresInc
+        self.thresMin = thresMin
+        self.thresholdType = thresholdType 
+        self.img = np.zeros((10, 10)) # store the last processed image
+
+    def process(self, img):
+        ret, imgTemp = cv.threshold(img, self.threshold, 256, self.thresholdType)
+        _, contours, hier = cv.findContours(imgTemp, cv.RETR_LIST, cv.CHAIN_APPROX_SIMPLE)
+
+        while len(contours) < self.nFeatures and self.threshold >= self.thresMin+self.thresInc:
+            self.threshold -= self.thresInc
+            ret, imgTemp = cv.threshold(img, self.threshold, 256, self.thresholdType)
+            _, contours, hier = cv.findContours(imgTemp, cv.RETR_LIST, cv.CHAIN_APPROX_SIMPLE)
+
+        self.img = imgTemp
         return img
 
 class AdaptiveErode:
@@ -32,7 +56,7 @@ class AdaptiveErode:
         self.iterations = startIterations
         self.nFeatures = nFeatures
         self.kernel = cv.getStructuringElement(kernelType, (kernelSize,kernelSize)) 
-        self.img = None
+        self.img = np.zeros((10, 10))
 
     def _findCandidatesByExclution(self, img, contours):
         """
@@ -116,7 +140,7 @@ class AdaptiveOpen:
         self.maxIter = maxIter
         self.nFeatures = nFeatures
         self.kernel = cv.getStructuringElement(kernelType, (kernelSize,kernelSize)) 
-        self.img = None
+        self.img = np.zeros((10, 10))
 
     def process(self, img):
         # this removes reflections effectively at close distances but reduces range
@@ -130,7 +154,7 @@ class AdaptiveOpen:
             imgTemp = cv.morphologyEx(img.copy(), cv.MORPH_OPEN, self.kernel, iterations=i)
             #imgTemp = cv.morphologyEx(img.copy(), cv.MORPH_ERODE, self.kernel, iterations=i)
             _, contours, hier = cv.findContours(imgTemp, cv.RETR_LIST, cv.CHAIN_APPROX_SIMPLE)
-            contours.sort(key=contourRatio, reverse=True)
+            #contours.sort(key=contourRatio, reverse=True)
             i += 1
         i -= 1
 
@@ -140,7 +164,7 @@ class AdaptiveOpen:
             imgTemp = cv.morphologyEx(img.copy(), cv.MORPH_OPEN, self.kernel, iterations=i)
             #imgTemp = cv.morphologyEx(img.copy(), cv.MORPH_ERODE, self.kernel, iterations=i)
             _, contours, hier = cv.findContours(imgTemp, cv.RETR_LIST, cv.CHAIN_APPROX_SIMPLE)
-            contours.sort(key=contourRatio, reverse=True)
+            #contours.sort(key=contourRatio, reverse=True)
 
         self.iterations = max(i, 0) # save to we don't have to try next time
         img = imgTemp
@@ -160,7 +184,7 @@ class AdaptiveErodeKernel:
         self.nFeatures = nFeatures
         self.kernelSize = kernelSize
         self.kernel = cv.getStructuringElement(kernelType, (kernelSize,kernelSize)) 
-        self.img = None
+        self.img = np.zeros((10, 10))
 
     def process(self, img):
         # this removes reflections effectively at close distances but reduces range
@@ -175,7 +199,7 @@ class AdaptiveErodeKernel:
             imgTemp = cv.morphologyEx(img.copy(), cv.MORPH_OPEN, kernel)
             _, contours, hier = cv.findContours(imgTemp, cv.RETR_LIST, cv.CHAIN_APPROX_SIMPLE)
             #contours = removeContoursOnEdges(contours)
-            contours.sort(key=contourRatio, reverse=True)
+            #contours.sort(key=contourRatio, reverse=True)
             i += 1
         i -= 1
 
@@ -186,7 +210,7 @@ class AdaptiveErodeKernel:
             imgTemp = cv.morphologyEx(img.copy(), cv.MORPH_OPEN, kernel)
             _, contours, hier = cv.findContours(imgTemp, cv.RETR_LIST, cv.CHAIN_APPROX_SIMPLE)
             #contours = removeContoursOnEdges(contours)
-            contours.sort(key=contourRatio, reverse=True)
+            #contours.sort(key=contourRatio, reverse=True)
 
         self.iterations = max(i, 1) # save to we don't have to try next time
         img = imgTemp
@@ -221,9 +245,9 @@ def fillContours(img, ratio):
 
     return img
 
-def fillContoursOnEdges(img, resolution):
+def fillContoursOnEdges(img):
     _, contours, hier = cv.findContours(img, cv.RETR_LIST, cv.CHAIN_APPROX_SIMPLE)
-    cv.fillPoly(img, contoursOnEdges(contours, resolution), color=(0, 0, 0))
+    cv.fillPoly(img, contoursOnEdges(contours, img.shape), color=(0, 0, 0))
     return img
 
 def contoursOnEdges(contours, resolution):
@@ -323,40 +347,6 @@ def weightedCentroid(gray):
     # https://stackoverflow.com/questions/53719588/calculate-a-centroid-with-opencv
     pass
 
-def _contours(gray, nFeatures, drawImg=None):
-    mask = np.zeros(gray.shape,np.uint8)
-    _, contours, hier = cv.findContours(gray.copy(), cv.RETR_LIST, cv.CHAIN_APPROX_SIMPLE)
-    if drawImg is not None:
-        cv.drawContours(drawImg, contours, -1, (0, 255, 0), 3)
-    points = []
-
-    contours.sort(key=contourRatio, reverse=True)
-    contours = contourAreaOutliers(contours)
-    #contours.sort(key=contourRatio, reverse=True)
-    contours = contours[:nFeatures]
-
-    for i, cnt in enumerate(contours):
-        (x,y),radius = cv.minEnclosingCircle(cnt)
-        center = (int(round(x)),int(round(y)))
-        radius = int(round(radius))
-        if drawImg is not None:
-            cv.circle(drawImg,center,radius,(0,255,0),2)
-
-        ratio = contourRatio(cnt)
-
-        if True:#area < 3000:# and ratio >= 0:# and area in maxValues:
-            if drawImg is not None:
-                drawInfo(drawImg, (center[0]+10, center[1]-10), str(ratio))
-                cv.drawContours(drawImg,[cnt],0,255,-1)
-
-
-            cx, cy = cnotourCentroid(cnt)
-            if drawImg is not None:
-                cv.circle(drawImg, (cx, cy), int(cv.contourArea(cnt)/100), (0,0,255), 5)
-            points.append((cx, cy))
-
-    return points
-
 def featureAssociation(featurePoints, detectedPoints, featurePointsGuess=None):
     """
     Assumes that the orientation of the feature model is approximately the identity matrix relative to the camera frame
@@ -408,9 +398,15 @@ class ThresholdFeatureExtractor:
     # Check this for contour properties
     # https://opencv24-python-tutorials.readthedocs.io/en/latest/py_tutorials/py_imgproc/py_contours/py_contour_properties/py_contour_properties.html
     def __init__(self, featureModel, camera, p=.02, erosionKernelSize=5, maxIter=10, useKernel=True, drawContours=False):
-        self.featureModel = featureModel
+        if isinstance(featureModel, int):
+            self.featureModel = None
+            self.nFeatures = featureModel
+        else:
+            self.featureModel = featureModel
+            self.nFeatures = len(self.featureModel.features)
         self.camera = camera
-        self.nFeatures = len(self.featureModel.features)
+        
+        #self.pHold = AdaptiveThreshold(self.nFeatures, 250, 1, 150)#PercentageThreshold(p)
         self.pHold = PercentageThreshold(p)
         self.adaOpen = AdaptiveOpen(self.nFeatures, kernelSize=erosionKernelSize, maxIter=maxIter)
         if useKernel:
@@ -463,17 +459,16 @@ class ThresholdFeatureExtractor:
         img = gray.copy()
 
         featurePointsGuess = None
-        if estTranslationVec is not None:
+        if estTranslationVec is not None and self.featureModel:
             roiImg = img.copy()
             #roiCnt = self.regionOfInterest(img, estTranslation, estRotation, wMargin=30, hMargin=30)
             featurePointsGuess = self.projectedFeatures(estTranslationVec, estRotationVec)
             roiCnt = self.regionOfInterest(img, featurePointsGuess, wMargin=30, hMargin=30)
             mask = np.zeros(roiImg.shape, np.int8)
             mask = cv.drawContours(mask, [roiCnt], -1, (255), -1)
+            cv.drawContours(imgColor, [roiCnt], -1, (0, 255, 0), 3)
             #roiImg = cv.rectangle(roiImg, (x,y), (x+w, y+h), (0, 255, 0), 10, cv.LINE_AA)
-            
             roiImg = cv.bitwise_and(img, img, mask=mask)
-            cv.imshow("bounding box", roiImg)
             img = roiImg
 
         #img = cv.GaussianBlur(img,(5,5),0)
@@ -482,7 +477,7 @@ class ThresholdFeatureExtractor:
         #blur = cv.bilateralFilter(img,5,200,50) # smoothing but, keeps edges. Makes the adaOpen faster
         #img = blur
         img = self.pHold.process(img)
-        img = fillContoursOnEdges(img, self.camera.resolution)
+        img = fillContoursOnEdges(img)
 
         _, contours, hier = cv.findContours(img, cv.RETR_LIST, cv.CHAIN_APPROX_SIMPLE)
         if self.drawContours: cv.drawContours(imgColor, contours, -1, (0, 0, 255), 3)
@@ -533,39 +528,71 @@ class ThresholdFeatureExtractor:
         if len(points) == 0:
             return img, []
 
-        points = np.array(points, dtype=np.float32)
-        points[:,0] *= self.camera.pixelWidth
-        points[:,1] *= self.camera.pixelHeight
+        if self.camera: # if no camera defined, we don't associate (need pixelsize etc to associate)
+            points = np.array(points, dtype=np.float32)
+            points[:,0] *= self.camera.pixelWidth
+            points[:,1] *= self.camera.pixelHeight
 
+            # we need to rotate the points if we want the relative orientation to be different, 
+            # otherwise feature association will fail
+            points3DAss = self.featureModel.features[:, :3].transpose()
+            points3DAss = np.matmul( R.from_euler("XYZ", (0, np.pi, 0)).as_dcm(), points3DAss).transpose()    
+            points3DAss = np.append(points3DAss, np.ones((points3DAss.shape[0], 1)), axis=1)
+            
+            associatedPoints, featurePointsGuess = featureAssociation(points3DAss, points, featurePointsGuess)
 
-        # we need to rotate the points if we want the relative orientation to be different, 
-        # otherwise feature association will fail
-        points3DAss = self.featureModel.features[:, :3].transpose()
-        points3DAss = np.matmul( R.from_euler("XYZ", (0, np.pi, 0)).as_dcm(), points3DAss).transpose()    
-        points3DAss = np.append(points3DAss, np.ones((points3DAss.shape[0], 1)), axis=1)
-        
-        associatedPoints, featurePointsGuess = featureAssociation(points3DAss, points, featurePointsGuess)
-
-        for i in range(len(associatedPoints)):
-            # convert points to pixels
-            px = associatedPoints[i][0] / self.camera.pixelWidth
-            py = associatedPoints[i][1] / self.camera.pixelHeight
-            fpx = featurePointsGuess[i][0] / self.camera.pixelWidth
-            fpy = featurePointsGuess[i][1] / self.camera.pixelHeight
-            drawInfo(imgColor, (int(px), int(py)), str(i))
-            drawInfo(imgColor, (int(fpx), int(fpy)), str(i), color=(0, 0, 255))
-            cv.circle(imgColor, (int(px), int(py)), 2, (255, 0, 0), 3)
-
+            for i in range(len(associatedPoints)):
+                # convert points to pixels
+                px = associatedPoints[i][0] / self.camera.pixelWidth
+                py = associatedPoints[i][1] / self.camera.pixelHeight
+                fpx = featurePointsGuess[i][0] / self.camera.pixelWidth
+                fpy = featurePointsGuess[i][1] / self.camera.pixelHeight
+                drawInfo(imgColor, (int(px), int(py)), str(i))
+                drawInfo(imgColor, (int(fpx), int(fpy)), str(i), color=(0, 0, 255))
+                cv.circle(imgColor, (int(px), int(py)), 2, (255, 0, 0), 3)
+            points = associatedPoints
+            
         print("Npoints:", len(points))
         print("Threshold:", self.pHold.threshold)
-        return img, associatedPoints
+        return img, points
+
+class GradientFeatureExtractor:
+    def __init__(self, camera, featureModel):
+        if isinstance(featureModel, int):
+            self.featureModel = None
+            self.nFeatures = featureModel
+        else:
+            self.featureModel = featureModel
+            self.nFeatures = len(self.featureModel.features)
+        self.camera = camera
+
+        self.pHold = PercentageThreshold(0.9)
+        self.adaOpen = AdaptiveOpen(len(self.featureModel.features), kernelSize=3, startIterations=1, maxIter=3)
+
+    def __call__(self, gray, imgColor, estTranslationVec=None, estRotationVec=None):
+        res = gray
+
+        grad_x = cv.Sobel(res, cv.CV_64F, 1, 0, ksize=3)
+        grad_y = cv.Sobel(res, cv.CV_64F, 0, 1, ksize=3)
+
+        abs_grad_x = cv.convertScaleAbs(grad_x)
+        abs_grad_y = cv.convertScaleAbs(grad_y)
+        res = cv.addWeighted(abs_grad_x, 0.5, abs_grad_y, 0.5, 0)
+
+        #res = cv.GaussianBlur(res, (3,3), 0)
+        res = cv.blur(res, (5,5))
+
+        res = self.pHold.process(res)
+        res = self.adaOpen.process(res)
+        #res = fillContours(res, 0.7)
+
+        return res, []
 
 if __name__ == '__main__':
     nFeatures = 4
     plt.figure()
 
-    pHold = PercentageThreshold(0.02)
-    adapOpen = AdaptiveOpen(nFeatures, kernelSize=5)
+    featureExtractor = ThresholdFeatureExtractor(featureModel=self.featureModel, camera=self.camera, p=0.01, erosionKernelSize=5, maxIter=3, useKernel=False)
     cap = cv.VideoCapture(2)
     while True:
         _, imgColor = cap.read()

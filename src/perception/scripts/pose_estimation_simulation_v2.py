@@ -19,13 +19,11 @@ import sys
 import os
 dirPath = os.path.dirname(os.path.realpath(__file__))
 sys.path.append(os.path.join(dirPath, "../../simulation/scripts"))
-for p in sys.path:
-    print(p)
 from coordinate_system import CoordinateSystem, CoordinateSystemArtist
 from feature import polygon, FeatureModel
 from camera import usbCamera
 from pose_estimation import DSPoseEstimator
-from pose_estimation_utils import plotPoints, plotAxis, projectPoints
+from pose_estimation_utils import plotPosePoints, plotAxis, projectPoints
 
 def vectorToPose(frameID, translationVector, rotationVector, covariance):
     rotMat = R.from_rotvec(rotationVector).as_dcm()
@@ -167,7 +165,6 @@ class PoseSimulation:
                                                                                 projPointsNoised, 
                                                                                 np.array([[4*sigmaX*sigmaX, 0.], # we set covariance as (2*std)^2 for 95% coverage
                                                                                         [0., 4*sigmaY*sigmaY]]),
-                                                                                10000,
                                                                                 estTranslationVec,
                                                                                 estRotationVec)
 
@@ -175,7 +172,6 @@ class PoseSimulation:
                                                             projPoints, 
                                                             np.array([[4*sigmaX*sigmaX, 0.],
                                                                     [0., 4*sigmaY*sigmaY]]),
-                                                            10000,
                                                             estTranslationVec,
                                                             estRotationVec)
 
@@ -206,11 +202,11 @@ class PoseSimulation:
 
             imgTemp = img.copy()
             # true pose
-            plotPoints(imgTemp, trueTrans, trueRotation, camera, featurePoints, color=(0,255,0))
+            plotPosePoints(imgTemp, trueTrans, trueRotation, camera, featurePoints, color=(0,255,0))
             #plotAxis(imgTemp, rotation, translation, camera_matrix, dist_coeffs)
 
             # estimated pose
-            plotPoints(imgTemp, translationVector, rotationVector, camera, featurePoints, color=(0,0,255))
+            plotPosePoints(imgTemp, translationVector, rotationVector, camera, featurePoints, color=(0,0,255))
             plotAxis(imgTemp, translationVector, rotationVector, camera, featurePoints, scale=0.043)
 
             self.imagePublisher.publish(self.cvBridge.cv2_to_imgmsg(imgTemp))

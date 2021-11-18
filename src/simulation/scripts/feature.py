@@ -24,9 +24,10 @@ class FeatureModel(CoordinateSystem):
             else:
                 self.features = np.append(self.features, polygon(r, n, s, z), axis=0)
 
-        rotMat = R.from_euler("XYZ", euler).as_dcm()
-        self.features = np.matmul(rotMat, self.features[:, :3].transpose()).transpose()
-        self.features = self.features[:, :3].copy() # Don't need homogenious
+        if self.features is not None:
+            rotMat = R.from_euler("XYZ", euler).as_dcm()
+            self.features = np.matmul(rotMat, self.features[:, :3].transpose()).transpose()
+            self.features = self.features[:, :3].copy() # Don't need homogenious
 
 class _FeatureModel(CoordinateSystem):
     def __init__(self, rad, n, shift=False, centerPointDist=None, zShift=0, *args, **kwargs):
@@ -64,6 +65,20 @@ class FeatureModelArtist3D(CoordinateSystemArtist):
 
         return self.artists()
 
+def smallPrototype():
+    featureModel = FeatureModel([0.06, 0], [4, 1], [False, False], [0, 0.043])
+    return featureModel
+
+def bigPrototype():
+    featureModel = FeatureModel([], [], [], [])
+    #featureModel = FeatureModel([0.06], [4], [True], [0])
+    featureModel.features = np.array([[0, 0, 0.465], 
+                                      [-0.33, -0.2575, 0], 
+                                      [0.33, -0.2575, 0], 
+                                      [0.33, 0.2575, 0], 
+                                      [-0.33, 0.2575, 0]])
+
+    return featureModel
         
 if __name__ == "__main__":
     import matplotlib.pyplot as plt
