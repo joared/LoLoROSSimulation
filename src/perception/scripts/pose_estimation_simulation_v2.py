@@ -96,7 +96,7 @@ class PoseSimulation:
         #img = cv.imread('../image_dataset/lights_in_scene.png')
         img = np.zeros(camera.resolution, dtype=np.int8)
         img = np.stack((img,)*3, axis=-1)
-        cv.imshow("img", img)
+        cv.imshow("feature model modification", img)
 
         poseEstimator = DSPoseEstimator(camera, ignorePitch=False, ignoreRoll=False)
         featurePoints = featureModel.features
@@ -174,6 +174,9 @@ class PoseSimulation:
                                                                     [0., 4*sigmaY*sigmaY]]),
                                                             estTranslationVec,
                                                             estRotationVec)
+
+            covariance[3][3] = .1
+            covariance[4][4] = .6
 
             pArray = PoseArray()
             #pArrayNoised = PoseArray()

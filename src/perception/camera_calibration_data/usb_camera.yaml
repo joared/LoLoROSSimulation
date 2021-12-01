@@ -1,6 +1,6 @@
 image_width: 640
 image_height: 480
-camera_name: lolo_camera
+camera_name: usb_camera_480p
 camera_matrix:
   rows: 3
   cols: 3

@@ -106,10 +106,8 @@ class ImageLabeler:
         elif event == cv.EVENT_LBUTTONUP:
             pass
         
-
-    def label(self, imgPath, errCircles=None):
-        imgName = os.path.basename(imgPath)
-        self.img = cv.imread(imgPath)
+    def label(self, img, imgName, errCircles=None):
+        self.img = img
         self.errCircles = errCircles if errCircles else []
 
         cv.namedWindow(imgName)
@@ -174,6 +172,9 @@ def saveLabeledImages(datasetPath, labelFile, labeledImgs):
 
 def readLabeledImages(datasetPath, labelFile):
     labelFile = join(datasetPath, labelFile)
+    if not os.path.isfile(labelFile):
+        with open(labelFile, 'w'): pass
+        print("Created label file '{}'".format(labelFile))
     labeledImgs = {}
     with open(labelFile, "r") as f:
         for line in f:
@@ -184,6 +185,69 @@ def readLabeledImages(datasetPath, labelFile):
             labeledImgs[imgPath] = labels
 
     return labeledImgs
+
+def labelVideoImages(datasetPath, videoFile, labelFile, featExtClass):
+    cap = cv.VideoCapture(join(datasetPath, videoFile))
+    if (cap.isOpened()== False):
+        print("Error opening video stream or file")
+
+    labeledImgs = readLabeledImages(datasetPath, labelFile)
+    
+    labeler = ImageLabeler()
+    featExt = featExtClass(featureModel=5, camera=None, p=0.01, erosionKernelSize=5, maxIter=6, useKernel=False, drawContours=False)
+    avgFrameRate = 0
+    N = 0
+    i = 0
+    while(cap.isOpened()):
+        ret, frame = cap.read()
+        ret, frame = cap.retrieve(100)
+        i += 1
+        print(i)
+        if ret == True:
+            imgColor = frame.copy()
+            gray = cv.cvtColor(frame, cv.COLOR_BGR2GRAY)
+
+            start = time.time()
+            N += 1
+
+            _, points = featExt(gray, imgColor)
+
+            elapsed = time.time() - start
+            frameRate = 1/elapsed
+            avgFrameRate = ((N-1)*avgFrameRate + frameRate)/N
+
+            print(avgFrameRate)
+
+            imgName = os.path.splitext(videoFile)[0] + "_frame_" + str(i) + ".png"
+            errCircles = None
+            if imgName in labeledImgs:
+                errCircles = labeledImgs[imgName]
+            tmpFrame = imgColor#frame.copy()
+            for p in points:
+                cv.circle(tmpFrame, p, 2, (255, 0, 0), 2)
+            if errCircles:
+                for j, ec in enumerate(errCircles):
+                    drawErrorCircle(tmpFrame, ec, j, (0, 255, 0))
+            cv.imshow("frame", tmpFrame)
+            cv.setWindowTitle("frame", imgName)
+
+            key = cv.waitKey(0) & 0xFF
+            if key == ord('q'):
+                break
+            elif key == ord("l"):  
+                labels = labeler.label(frame, imgName, errCircles=errCircles)
+                labeledImgs[join(datasetPath, imgName)] = labels
+                cv.imwrite(join(datasetPath, imgName), frame)
+                print("Saved image frame '{}'".format(imgName))
+            else:    
+                pass
+
+        else:
+            break
+    saveLabeledImages(datasetPath, labelFile, labeledImgs)
+    cap.release()
+    #out.release()
+    cv.destroyAllWindows()
 
 def labelVideo(filePath, featExtClass):
     cap = cv.VideoCapture(filePath)
@@ -209,20 +273,20 @@ def labelVideo(filePath, featExtClass):
             #if 70 < i < 500: # FILE0148
             #if False:
             #if 90 < i < 530: # FILE0149
-            if 1700 < i < 2000: # FILE0169
-                start = time.time()
-                N += 1
-                _, points = featExt(gray, frame)
-                elapsed = time.time() - start
-                frameRate = 1/elapsed
-                avgFrameRate = ((N-1)*avgFrameRate + frameRate)/N
-                for p in points:
-                    cv.circle(frame, p, 10, (255, 0, 0), -1)
-                    timeWait = 1
-                print(avgFrameRate)
-                timeWait = 0
+            #if 1700 < i < 2000: # FILE0169
+            start = time.time()
+            N += 1
+            _, points = featExt(gray, frame)
+            elapsed = time.time() - start
+            frameRate = 1/elapsed
+            avgFrameRate = ((N-1)*avgFrameRate + frameRate)/N
+            for p in points:
+                cv.circle(frame, p, 10, (255, 0, 0), -1)
+                timeWait = 1
+            print(avgFrameRate)
+            timeWait = 0
             #out.write(frame)
-                cv.imshow('Frame',frame)
+            cv.imshow('Frame',frame)
             if cv.waitKey(timeWait) & 0xFF == ord('q'):
                 break
         else:
@@ -245,14 +309,16 @@ def labelImages(datasetPath, labelFile):
         labeler = ImageLabeler()
         for imgPath in unLabeledImgPaths:
             if imgPath not in labeledImgs:
-                labels = labeler.label(imgPath)
+                img = cv.imread(imgPath)
+                labels = labeler.label(img, imgPath)
                 labeledImgs[imgPath] = labels
 
     else:
         # Then label already labeled images
         labeler = ImageLabeler()
         for imgPath in imgPaths:
-            labels = labeler.label(imgPath, labeledImgs[imgPath])
+            img = cv.imread(imgPath)
+            labels = labeler.label(img, imgPath, labeledImgs[imgPath])
             labeledImgs[imgPath] = labels
 
     saveLabeledImages(datasetPath, labelFile, labeledImgs)
@@ -273,7 +339,9 @@ def testFeatureExtractor(featExtClass, datasetPath, labelFile):
         labels = labeledImgs[imgPath]
         nFeatures = len(labels)
 
-        featExt = featExtClass(nFeatures, camera=None, p=0.1, useKernel=False)
+        #featExt = featExtClass(nFeatures, camera=None, p=0.1, useKernel=False)
+        featExt = featExtClass(featureModel=5, camera=None, p=0.01, erosionKernelSize=5, maxIter=4, useKernel=False)
+        
         _, points = featExt(gray, img.copy())
         _, points = featExt(gray, img)
         points = points[:nFeatures]
@@ -300,19 +368,22 @@ def testFeatureExtractor(featExtClass, datasetPath, labelFile):
                 for p in pointsInCircle:
                     cv.circle(img, p, 1, (0, 140, 255), 2)
 
+        correctlyClassified = True
         for p in points:
             if p not in classifiedPoints:
                 cv.circle(img, p, 1, (0, 0, 255), 2)
+                correctlyClassified = False
 
-        font = cv.FONT_HERSHEY_SIMPLEX
-        fontScale = 1
-        thickness = 2
-        infoText = "{}/{}".format(len(classifiedPoints), len(points))
-        cv.putText(img, infoText, (30, 30), font, fontScale, (0, 255, 0), thickness, cv.LINE_AA)
-        cv.imshow("bin", featExt.pHold.img)
-        cv.imshow("bin open", featExt.adaOpen.img)
-        cv.imshow("image", img)
-        cv.waitKey(0)
+        if correctlyClassified:
+            font = cv.FONT_HERSHEY_SIMPLEX
+            fontScale = 1
+            thickness = 2
+            infoText = "{}/{}".format(len(classifiedPoints), len(points))
+            cv.putText(img, infoText, (30, 30), font, fontScale, (0, 255, 0), thickness, cv.LINE_AA)
+            cv.imshow("bin", featExt.pHold.img)
+            cv.imshow("bin open", featExt.adaOpen.img)
+            cv.imshow("image", img)
+            cv.waitKey(0)
 
 if __name__ == "__main__":
     sys.path.append("scripts")
@@ -321,6 +392,6 @@ if __name__ == "__main__":
     datasetPath = "image_dataset"
     labelFile = "labels.txt"
 
-    #labelVideo("LoLo/FILE0169.MP4", ThresholdFeatureExtractor)
-    labelImages(datasetPath, labelFile)
+    labelVideoImages("image_dataset", "271121_5planar_1080p.MP4", labelFile, ThresholdFeatureExtractor)
+    #labelImages(datasetPath, labelFile)
     #testFeatureExtractor(ThresholdFeatureExtractor, datasetPath, labelFile)

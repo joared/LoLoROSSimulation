@@ -11,14 +11,7 @@ import numpy as np
 import matplotlib.pyplot as plt
 from feature_extraction import GradientFeatureExtractor, featureAssociation, drawInfo, ThresholdFeatureExtractor
 from pose_estimation import DSPoseEstimator
-from pose_estimation_utils import plotPosePoints, plotAxis, plotPoints
-# remove this eventually
-import sys
-dirPath = os.path.dirname(os.path.realpath(__file__))
-sys.path.append(os.path.join(dirPath, "../../simulation/scripts"))
-from camera import usbCamera, contourCamera
-from feature import smallPrototype, bigPrototype
-from coordinate_system import CoordinateSystem, CoordinateSystemArtist
+from pose_estimation_utils import plotPosePoints, plotAxis, plotPoints, plotPoseInfo
 
 from scipy.spatial.transform import Rotation as R
 
@@ -29,10 +22,14 @@ class Perception:
         self.featureModel = featureModel
 
         #featureExtractor = ThresholdFeatureExtractor(featureModel=self.featureModel, camera=self.camera, p=0.02, erosionKernelSize=7, maxIter=10, useKernel=False)
-        self.featureExtractor = ThresholdFeatureExtractor(featureModel=self.featureModel, camera=self.camera, p=0.01, erosionKernelSize=5, maxIter=3, useKernel=False)
+        self.featureExtractor = ThresholdFeatureExtractor(featureModel=self.featureModel, camera=self.camera, p=0.05, erosionKernelSize=5, maxIter=4, useKernel=False)
         self.gradFeatureExtractor = GradientFeatureExtractor(featureModel=self.featureModel, camera=self.camera)
         
-        self.poseEstimator = DSPoseEstimator(self.camera, ignoreRoll=False, ignorePitch=False, flag=cv.SOLVEPNP_ITERATIVE)
+        self.poseEstimator = DSPoseEstimator(self.camera, 
+                                             ignoreRoll=False, 
+                                             ignorePitch=False, 
+                                             flag=cv.SOLVEPNP_ITERATIVE,
+                                             calcCovariance=True)
  
         self.imageMsg = None
         self.bridge = CvBridge()
@@ -50,23 +47,31 @@ class Perception:
     def imgCallback(self, msg):
         self.imageMsg = msg
 
-    def process(self, imgColor, publishPose=True, publishImages=False, plot=False):
-        estTranslationVec = None
-        estRotationVec = None
-        poseAquired = False
+    def update(self, 
+               imgColor, 
+               estTranslationVector=None, 
+               estRotationVector=None, 
+               publishPose=True, 
+               publishImages=False, 
+               plot=False):
 
         processedImg = imgColor.copy()
         poseImg = imgColor.copy()
         #imgColor = imgColor.copy()
 
         gray = cv.cvtColor(imgColor, cv.COLOR_BGR2GRAY)
+        waterSurfaceMask = np.zeros(gray.shape, dtype=np.uint8)
+        surfaceLineRatio = 0#.45 # ratio 0-1, where 0 is the top of the image and 1 is the bottom
+        waterSurfaceMask[int(waterSurfaceMask.shape[0]*surfaceLineRatio):, :] = 1
+
+        gray = cv.bitwise_and(gray, gray, mask=waterSurfaceMask)
 
         #estTranslationVec = np.array([-0.3, 0.3, 1.5])
         #estRotationVec = np.array([0., np.pi, 0.])
         res, associatedPoints = self.featureExtractor(gray, 
                                                       processedImg, 
-                                                      estTranslationVec, 
-                                                      estRotationVec)
+                                                      estTranslationVector, 
+                                                      estRotationVector)
         #resGrad, _ = gradFeatureExtractor(gray, 
         #                                  processedImg, 
         #                                  estTranslationVec, 
@@ -80,8 +85,8 @@ class Perception:
                                 associatedPoints, 
                                 np.array([[self.camera.pixelWidth*2, 0], 
                                         [0, self.camera.pixelHeight*2]]),
-                                estTranslationVec,
-                                estRotationVec)
+                                estTranslationVector,
+                                estRotationVector)
 
             # show lights pose wrt to camera
             rotMat = R.from_rotvec(rotationVector.transpose()).as_dcm()
@@ -97,12 +102,6 @@ class Perception:
 
             translation = transl
             rotation = rotMat
-            if poseAquired:
-                print("Pose aquired")
-                estTranslationVec = translationVector
-                estRotationVec = rotationVector
-
-            print("Range:", np.linalg.norm(translation))
 
         if False:
             hist = cv.calcHist([gray], [0], None, [256], [0, 256])
@@ -121,7 +120,8 @@ class Perception:
                     self.poseEstimator.rotationVector, 
                     self.camera, 
                     self.featureModel.features, 
-                    self.featureModel.features[0][2])
+                    self.featureModel.maxRad) # scaling for the axis shown
+                    #self.featureModel.features[0][2])
             plotPosePoints(poseImg, 
                         self.poseEstimator.translationVector, 
                         self.poseEstimator.rotationVector, 
@@ -129,6 +129,9 @@ class Perception:
                         self.featureModel.features, 
                         color=(0, 0, 255))
             plotPoints(poseImg, self.camera, associatedPoints, (255, 0, 0))
+            plotPoseInfo(poseImg, 
+                         self.poseEstimator.translationVector, 
+                         self.poseEstimator.rotationVector)
 
         if publishImages:
             self.imgThresholdPublisher.publish(self.bridge.cv2_to_imgmsg(self.featureExtractor.pHold.img))
@@ -144,6 +147,10 @@ class Perception:
             cv.imshow("processed image", processedImg)
             cv.waitKey(0)
 
+        return (self.poseEstimator.translationVector, 
+                self.poseEstimator.rotationVector, 
+                self.poseEstimator.poseCov)
+
     def run(self, publishPose=True, publishImages=True, plot=False):
         avgFrameRate = 0
         i = 0
@@ -156,7 +163,20 @@ class Perception:
                     print(e)
                 else:
                     tStart = time.time()
-                    self.process(imgColor, publishPose, publishImages, plot)
+
+                    estTranslationVector = None
+                    estRotationVector = None
+
+                    (estTranslationVector, 
+                     estRotationVector, 
+                     covariance) = self.update(
+                                    imgColor, 
+                                    estTranslationVector=estTranslationVector,
+                                    estRotationVector=estRotationVector, 
+                                    publishPose=publishPose, 
+                                    publishImages=publishImages, 
+                                    plot=plot)
+
                     tElapsed = time.time() - tStart
                     hz = 1/tElapsed
                     i += 1
@@ -166,11 +186,25 @@ class Perception:
             rate.sleep()
 
 if __name__ == '__main__':
+    # remove this eventually
+    import sys
+    dirPath = os.path.dirname(os.path.realpath(__file__))
+    sys.path.append(os.path.join(dirPath, "../../simulation/scripts"))
+    from camera import usbCamera480p, usbCamera720p, contourCamera1080p
+    from feature import smallPrototype5, bigPrototype5, bigPrototype52
+    #from coordinate_system import CoordinateSystem, CoordinateSystemArtist
+
     rospy.init_node('perception_node')
 
-    #featureModel = smallPrototype()
-    featureModel = bigPrototype()
-    camera = contourCamera
-
+    featureModel = smallPrototype5
+    featureModel.features *= 1
+    featureModel.maxRad *= 1
+    print(featureModel.features)
+    #featureModel = bigPrototype52
+    #featureModel.features *= 1.33
+    camera = usbCamera720p
+    camera._cameraMatrix[:2, :] *= 0.8506
+    print(camera.cameraMatrixPixel*0.8506)
+    print(camera.pixelWidth)
     perception = Perception(camera, featureModel)
     perception.run()

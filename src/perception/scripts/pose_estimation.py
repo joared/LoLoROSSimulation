@@ -64,7 +64,7 @@ class DSPoseEstimator:
                                                                     rvec=guessRot,
                                                                     flags=cv.SOLVEPNP_ITERATIVE)
         else:
-            guessTrans = np.array([[0.], [0.], [1.]])
+            guessTrans = np.array([[0.], [0.], [1/2.8*1e6*self.camera.pixelWidth]])
             guessRot = np.array([[0.], [np.pi], [0.]])
             # On axis-angle: https://en.wikipedia.org/wiki/Axis%E2%80%93angle_representation#Relationship_to_other_representations
             success, rotationVector, translationVector = cv.solvePnP(featurePoints,
