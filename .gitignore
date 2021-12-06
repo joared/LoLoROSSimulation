@@ -3,3 +3,5 @@ build/
 .catkin_workspace
 *.pyc
 __pycache__/
+/src/images_presentation
+/src/image_dataset
